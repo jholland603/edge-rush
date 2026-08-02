@@ -5,7 +5,10 @@ Build the /data JSON tree for the NFL handicapping site from raw nflverse CSVs.
 Source layout expected (relative to --raw-dir, default ./raw):
     games.csv
     team/stats_team_week_{season}.csv
-    player/player_stats_{season}.csv
+    player/stats_player_week_{season}.csv   (nflverse's "player_stats" release
+        is deprecated as of 2025-08-01 in favor of "stats_player"; the week-level
+        file there covers offense, defense, kicking, and punting all in one
+        file per season instead of splitting by stat_type)
 
 Output layout (relative to --out-dir, default ./data):
     data/games/{season}.json
@@ -118,20 +121,22 @@ def build_teams(raw_dir: Path, out_dir: Path) -> list[int]:
 
 
 # --------------------------------------------------------------------------
-# player/player_stats_{season}.csv -> data/players/season/{season}.json
+# player/stats_player_week_{season}.csv -> data/players/season/{season}.json
 #                                   -> data/players/career/{player_id}.json
 # --------------------------------------------------------------------------
 NON_NUMERIC_PLAYER_COLS = {
     "player_id", "player_name", "player_display_name", "position",
-    "position_group", "headshot_url", "recent_team", "season", "week",
-    "season_type", "opponent_team",
+    "position_group", "headshot_url", "team", "season", "week",
+    "season_type", "opponent_team", "game_id",
+    # distance-list strings (e.g. "42,38,51"), not summable
+    "fg_made_list", "fg_missed_list", "fg_blocked_list",
 }
 
 
 def build_players_season(raw_dir: Path, out_dir: Path, season_min=None, season_max=None) -> list[int]:
     """Build data/players/season/{season}.json for seasons in [season_min, season_max]."""
     player_dir = raw_dir / "player"
-    files = sorted(player_dir.glob("player_stats_*.csv"))
+    files = sorted(player_dir.glob("stats_player_week_*.csv"))
     updated = now_iso()
     seasons = []
 
@@ -147,7 +152,10 @@ def build_players_season(raw_dir: Path, out_dir: Path, season_min=None, season_m
         if season_max is not None and season > season_max:
             continue
         seasons.append(season)
-        df = pd.read_csv(f, low_memory=False)
+        # pyarrow engine: this source is much wider (145 cols, every position)
+        # than the old offense-only file, and the default C parser is too slow
+        # on it to fit a single-season build inside a short time budget.
+        df = pd.read_csv(f, engine="pyarrow")
 
         # bulk NaN-clean + to_dict ONCE per season, then bucket in pure python
         # (looping pandas groupby.to_dict per player is 10x+ slower at this scale)
@@ -165,7 +173,7 @@ def build_players_season(raw_dir: Path, out_dir: Path, season_min=None, season_m
                     "player_display_name": rec["player_display_name"],
                     "position": rec["position"],
                     "position_group": rec["position_group"],
-                    "team": rec["recent_team"],
+                    "team": rec["team"],
                     "weeks": [],
                 }
                 players[pid] = p
@@ -187,10 +195,10 @@ def build_players_season(raw_dir: Path, out_dir: Path, season_min=None, season_m
 def build_players_career(raw_dir: Path, out_dir: Path):
     """Build data/players/career/{player_id}.json from ALL player_stats CSVs found."""
     player_dir = raw_dir / "player"
-    files = sorted(player_dir.glob("player_stats_*.csv"))
+    files = sorted(player_dir.glob("stats_player_week_*.csv"))
     updated = now_iso()
     seasons = [int(f.stem.split("_")[-1]) for f in files]
-    all_season_dfs = [pd.read_csv(f, low_memory=False) for f in files]
+    all_season_dfs = [pd.read_csv(f, engine="pyarrow") for f in files]
 
     # ---- career totals, computed with vectorized groupby over ALL seasons at once ----
     big_df = pd.concat(all_season_dfs, ignore_index=True)
@@ -202,7 +210,7 @@ def build_players_career(raw_dir: Path, out_dir: Path):
     games_played = big_df.groupby("player_id").size()
     display_name = big_df.groupby("player_id")["player_display_name"].last()
     position = big_df.groupby("player_id")["position"].last()
-    teams = big_df.groupby("player_id")["recent_team"].apply(
+    teams = big_df.groupby("player_id")["team"].apply(
         lambda s: sorted(set(s.dropna()))
     )
     seasons_played = big_df.groupby("player_id")["season"].apply(
