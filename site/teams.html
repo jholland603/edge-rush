@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFL Model &mdash; Teams</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<site-header active="teams"></site-header>
+
+<main>
+  <div class="page-header">
+    <h1>Team stats &amp; ratings</h1>
+    <p>Weekly team efficiency by season, straight from the raw play-by-play aggregates (EPA/play, yardage, and turnovers).</p>
+  </div>
+
+  <div class="controls">
+    <div class="control">
+      <label for="season-select">Season</label>
+      <select id="season-select"></select>
+    </div>
+    <div class="control">
+      <label for="team-select">Team</label>
+      <select id="team-select"></select>
+    </div>
+  </div>
+
+  <div class="card-grid" id="summary-cards"></div>
+
+  <h2>Weekly log</h2>
+  <div class="table-wrap" id="team-table-wrap">
+    <div class="loading">Select a season and team.</div>
+  </div>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/page-teams.js"></script>
+</body>
+</html>

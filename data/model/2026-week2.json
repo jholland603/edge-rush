@@ -1,0 +1,152 @@
+{
+  "week": 2,
+  "season": 2026,
+  "updated": "2026-08-02T20:40:55Z",
+  "note": "PAPER TRADING ONLY. Phase 1 calibration testing found this model's confidence is not reliably calibrated (Brier score at/above a naive 50/50 baseline). These numbers are logged for tracking, not acted on.",
+  "games": [
+    {
+      "matchup": "DET @ BUF",
+      "market_spread": 3.0,
+      "model_spread": 2.32,
+      "edge": -0.68,
+      "p_home_covers": 0.4879,
+      "flagged": false,
+      "market_total": 52.5
+    },
+    {
+      "matchup": "CAR @ ATL",
+      "market_spread": 1.5,
+      "model_spread": 2.24,
+      "edge": 0.74,
+      "p_home_covers": 0.4905,
+      "flagged": false,
+      "market_total": 43.5
+    },
+    {
+      "matchup": "NO @ BAL",
+      "market_spread": 7.5,
+      "model_spread": 3.34,
+      "edge": -4.16,
+      "p_home_covers": 0.4816,
+      "flagged": true,
+      "market_total": 46.5
+    },
+    {
+      "matchup": "MIN @ CHI",
+      "market_spread": 3.5,
+      "model_spread": 5.13,
+      "edge": 1.63,
+      "p_home_covers": 0.4921,
+      "flagged": false,
+      "market_total": 45.5
+    },
+    {
+      "matchup": "CIN @ HOU",
+      "market_spread": 2.5,
+      "model_spread": 1.46,
+      "edge": -1.04,
+      "p_home_covers": 0.4873,
+      "flagged": false,
+      "market_total": 46.5
+    },
+    {
+      "matchup": "PIT @ NE",
+      "market_spread": 4.5,
+      "model_spread": 3.31,
+      "edge": -1.19,
+      "p_home_covers": 0.487,
+      "flagged": false,
+      "market_total": 43.5
+    },
+    {
+      "matchup": "GB @ NYJ",
+      "market_spread": -6.0,
+      "model_spread": 2.44,
+      "edge": 8.44,
+      "p_home_covers": 0.5044,
+      "flagged": true,
+      "market_total": 42.5
+    },
+    {
+      "matchup": "CLE @ TB",
+      "market_spread": 6.0,
+      "model_spread": 3.88,
+      "edge": -2.12,
+      "p_home_covers": 0.4853,
+      "flagged": true,
+      "market_total": 42.5
+    },
+    {
+      "matchup": "PHI @ TEN",
+      "market_spread": -4.5,
+      "model_spread": 2.71,
+      "edge": 7.21,
+      "p_home_covers": 0.5022,
+      "flagged": true,
+      "market_total": 42.5
+    },
+    {
+      "matchup": "JAX @ DEN",
+      "market_spread": 2.5,
+      "model_spread": 1.74,
+      "edge": -0.76,
+      "p_home_covers": 0.4878,
+      "flagged": false,
+      "market_total": 43.5
+    },
+    {
+      "matchup": "LV @ LAC",
+      "market_spread": 8.5,
+      "model_spread": 2.35,
+      "edge": -6.15,
+      "p_home_covers": 0.478,
+      "flagged": true,
+      "market_total": 42.5
+    },
+    {
+      "matchup": "SEA @ ARI",
+      "market_spread": -10.0,
+      "model_spread": 3.2,
+      "edge": 13.2,
+      "p_home_covers": 0.513,
+      "flagged": true,
+      "market_total": 44.5
+    },
+    {
+      "matchup": "WAS @ DAL",
+      "market_spread": 4.5,
+      "model_spread": 2.92,
+      "edge": -1.58,
+      "p_home_covers": 0.4863,
+      "flagged": false,
+      "market_total": 51.5
+    },
+    {
+      "matchup": "MIA @ SF",
+      "market_spread": 10.5,
+      "model_spread": 3.14,
+      "edge": -7.36,
+      "p_home_covers": 0.4758,
+      "flagged": true,
+      "market_total": 46.5
+    },
+    {
+      "matchup": "IND @ KC",
+      "market_spread": 6.5,
+      "model_spread": 0.68,
+      "edge": -5.82,
+      "p_home_covers": 0.4786,
+      "flagged": true,
+      "market_total": 47.5
+    },
+    {
+      "matchup": "NYG @ LA",
+      "market_spread": 8.5,
+      "model_spread": 3.57,
+      "edge": -4.93,
+      "p_home_covers": 0.4802,
+      "flagged": true,
+      "market_total": 48.5
+    }
+  ]
+}

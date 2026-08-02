@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFL Model &mdash; Home</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<site-header active="home"></site-header>
+
+<main>
+  <div class="page-header">
+    <h1>NFL Handicapping Model</h1>
+    <p>A personal power-ratings project: EPA-based team ratings, a leak-free backtest against closing lines, and a weekly paper-trading feed. Browse the underlying data or check this week's model output below.</p>
+  </div>
+
+  <div class="banner info" id="status-banner">
+    Loading current status&hellip;
+  </div>
+
+  <div class="card-grid" id="stat-cards">
+    <div class="stat-card card"><div class="value">&hellip;</div><div class="label">Seasons of data</div></div>
+    <div class="stat-card card"><div class="value">&hellip;</div><div class="label">Teams tracked</div></div>
+    <div class="stat-card card"><div class="value">&hellip;</div><div class="label">Players tracked</div></div>
+    <div class="stat-card card"><div class="value">&hellip;</div><div class="label">Data last updated</div></div>
+  </div>
+
+  <h2>Explore</h2>
+  <div class="nav-cards">
+    <a class="nav-card" href="teams.html">
+      <h3>Team ratings &amp; stats</h3>
+      <p>Season-by-season team efficiency, EPA/play, and weekly game logs.</p>
+    </a>
+    <a class="nav-card" href="players.html">
+      <h3>Player stats</h3>
+      <p>Search any player since 1999 for career totals and season-by-season logs.</p>
+    </a>
+    <a class="nav-card" href="games.html">
+      <h3>Games &amp; schedule</h3>
+      <p>Every game since 1999 with scores, closing lines, and results.</p>
+    </a>
+    <a class="nav-card" href="picks.html">
+      <h3>Model picks &amp; log</h3>
+      <p>Current-week paper-trading predictions and the full historical pick log.</p>
+    </a>
+  </div>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/page-home.js"></script>
+</body>
+</html>

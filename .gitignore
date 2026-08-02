@@ -1,0 +1,23 @@
+# Raw source CSVs, pulled from nflverse-data GitHub releases. Fully
+# reproducible from that public source and already distilled into data/
+# and backtest/, so they're left out to keep the repo light. See README
+# for how to repopulate this folder if you want to re-run the backtests
+# from scratch.
+raw/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Node (only created if serve-site.bat falls back to npx http-server)
+node_modules/

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFL Model &mdash; Picks</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<site-header active="picks"></site-header>
+
+<main>
+  <div class="page-header">
+    <h1>Model picks &amp; log</h1>
+    <p>Weekly predictions vs. the closing market line, and the running paper-trading log.</p>
+  </div>
+
+  <div class="banner warn">
+    <strong>Paper trading only.</strong> Phase 1 calibration testing found this model's confidence is not
+    reliably calibrated (Brier score at/above a naive 50/50 baseline). Nothing here is a betting
+    recommendation &mdash; it's logged for tracking only.
+  </div>
+
+  <div class="controls">
+    <div class="control">
+      <label for="week-select">Week</label>
+      <select id="week-select"></select>
+    </div>
+  </div>
+
+  <div class="table-wrap" id="week-table-wrap">
+    <div class="loading">Loading&hellip;</div>
+  </div>
+
+  <h2>Pick log</h2>
+  <p class="section-intro">Every game flagged (|edge| &ge; 2.0 pts) at the time it was predicted. Values are frozen at flag time; results are filled in by the reconciliation step once games are played.</p>
+
+  <div class="card-grid" id="log-summary"></div>
+
+  <div class="table-wrap" id="log-table-wrap">
+    <div class="loading">Loading&hellip;</div>
+  </div>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/page-picks.js"></script>
+</body>
+</html>

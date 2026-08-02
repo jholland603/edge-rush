@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFL Model &mdash; Games</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<site-header active="games"></site-header>
+
+<main>
+  <div class="page-header">
+    <h1>Games &amp; schedule</h1>
+    <p>Every game since 1999 with final score, closing spread/total, and how each side finished against those lines.</p>
+  </div>
+
+  <div class="controls">
+    <div class="control">
+      <label for="season-select">Season</label>
+      <select id="season-select"></select>
+    </div>
+    <div class="control">
+      <label for="week-select">Week</label>
+      <select id="week-select"></select>
+    </div>
+    <div class="control" style="flex:1; min-width:180px;">
+      <label for="team-filter">Team (optional)</label>
+      <input type="text" id="team-filter" placeholder="e.g. KC" maxlength="3" style="text-transform:uppercase;">
+    </div>
+  </div>
+
+  <div class="table-wrap" id="games-table-wrap">
+    <div class="loading">Loading&hellip;</div>
+  </div>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/page-games.js"></script>
+</body>
+</html>

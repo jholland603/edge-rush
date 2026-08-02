@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFL Model &mdash; Players</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<site-header active="players"></site-header>
+
+<main>
+  <div class="page-header">
+    <h1>Player stats</h1>
+    <p>Search any player tracked since 1999 for career totals and season-by-season weekly logs.</p>
+  </div>
+
+  <div class="controls">
+    <div class="control player-search-results" style="flex:1; min-width:260px;">
+      <label for="player-search">Search players</label>
+      <input type="search" id="player-search" placeholder="Start typing a name&hellip;" autocomplete="off">
+      <div id="search-results"></div>
+    </div>
+  </div>
+
+  <div id="player-detail">
+    <div class="empty-state">Search for a player above to see their stats.</div>
+  </div>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/page-players.js"></script>
+</body>
+</html>

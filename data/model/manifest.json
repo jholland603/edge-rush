@@ -1,0 +1,24 @@
+{
+  "weeks": [
+    {
+      "season": 2026,
+      "week": 1
+    },
+    {
+      "season": 2026,
+      "week": 2
+    },
+    {
+      "season": 2026,
+      "week": 3
+    },
+    {
+      "season": 2026,
+      "week": 4
+    }
+  ],
+  "latest": {
+    "season": 2026,
+    "week": 4
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "edge_only": {
+    "games_scored": 4951,
+    "brier_score": 0.25,
+    "overall_hit_rate_all_picks": 0.5094,
+    "calibration_table": [
+      {
+        "bucket": "(0.483, 0.496]",
+        "games": 991,
+        "avg_predicted": 0.4917,
+        "actual_hit_rate": 0.5076
+      },
+      {
+        "bucket": "(0.496, 0.505]",
+        "games": 990,
+        "avg_predicted": 0.5,
+        "actual_hit_rate": 0.4919
+      },
+      {
+        "bucket": "(0.505, 0.515]",
+        "games": 990,
+        "avg_predicted": 0.5115,
+        "actual_hit_rate": 0.5303
+      },
+      {
+        "bucket": "(0.515, 0.523]",
+        "games": 990,
+        "avg_predicted": 0.5189,
+        "actual_hit_rate": 0.5051
+      },
+      {
+        "bucket": "(0.523, 0.579]",
+        "games": 990,
+        "avg_predicted": 0.5311,
+        "actual_hit_rate": 0.5121
+      }
+    ],
+    "top_n_by_probability": {
+      "top_1_per_week": {
+        "games": 379,
+        "hit_rate": 0.5172
+      },
+      "top_2_per_week": {
+        "games": 758,
+        "hit_rate": 0.5198
+      },
+      "top_3_per_week": {
+        "games": 1137,
+        "hit_rate": 0.518
+      },
+      "top_4_per_week": {
+        "games": 1515,
+        "hit_rate": 0.5155
+      },
+      "top_5_per_week": {
+        "games": 1886,
+        "hit_rate": 0.5138
+      }
+    }
+  },
+  "full_feature": {
+    "games_scored": 4951,
+    "brier_score": 0.2507,
+    "overall_hit_rate_all_picks": 0.5094,
+    "calibration_table": [
+      {
+        "bucket": "(0.377, 0.478]",
+        "games": 991,
+        "avg_predicted": 0.4609,
+        "actual_hit_rate": 0.5025
+      },
+      {
+        "bucket": "(0.478, 0.494]",
+        "games": 990,
+        "avg_predicted": 0.4863,
+        "actual_hit_rate": 0.4949
+      },
+      {
+        "bucket": "(0.494, 0.509]",
+        "games": 990,
+        "avg_predicted": 0.5016,
+        "actual_hit_rate": 0.5242
+      },
+      {
+        "bucket": "(0.509, 0.525]",
+        "games": 990,
+        "avg_predicted": 0.5167,
+        "actual_hit_rate": 0.5091
+      },
+      {
+        "bucket": "(0.525, 0.661]",
+        "games": 990,
+        "avg_predicted": 0.5452,
+        "actual_hit_rate": 0.5162
+      }
+    ],
+    "top_n_by_probability": {
+      "top_1_per_week": {
+        "games": 379,
+        "hit_rate": 0.4776
+      },
+      "top_2_per_week": {
+        "games": 756,
+        "hit_rate": 0.5093
+      },
+      "top_3_per_week": {
+        "games": 1129,
+        "hit_rate": 0.5058
+      },
+      "top_4_per_week": {
+        "games": 1491,
+        "hit_rate": 0.5124
+      },
+      "top_5_per_week": {
+        "games": 1826,
+        "hit_rate": 0.5131
+      }
+    }
+  }
+}
