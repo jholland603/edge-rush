@@ -252,13 +252,23 @@ def build_index(out_dir: Path):
         all_teams.update(json.loads(f.read_text())["teams"].keys())
 
     players_index = {}
+    skipped_unnamed = 0
     for f in (out_dir / "players" / "career").glob("*.json"):
         d = json.loads(f.read_text())
+        # A handful of very early (pre-2000) player_stats rows have no name/position
+        # at all in the source data (nflverse data-quality gap, not ours to fix) --
+        # skip them from the searchable index rather than surface an unsearchable
+        # null-named entry.
+        if not d.get("player_display_name"):
+            skipped_unnamed += 1
+            continue
         players_index[d["player_id"]] = {
             "name": d["player_display_name"],
             "position": d["position"],
             "seasons": d["seasons"],
         }
+    if skipped_unnamed:
+        print(f"  index: skipped {skipped_unnamed} career file(s) with no player name in source data")
 
     payload = {
         "updated": now_iso(),
