@@ -3,29 +3,31 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NFL Model &mdash; Players</title>
+<title>NFL Model &mdash; Compare Players</title>
 <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body>
 
-<site-header active="players"></site-header>
+<site-header active="compare"></site-header>
 
 <main>
   <div class="page-header">
-    <h1>Player stats</h1>
-    <p>Search any player tracked since 1999 for career totals and season-by-season weekly logs.</p>
+    <h1>Compare players</h1>
+    <p>Search and add 2 or more players to see their career totals side by side. Mixed positions are fine &mdash; each player's own stat columns just fill in, everyone else shows a dash.</p>
   </div>
 
   <div class="controls">
     <div class="control player-search-results" style="flex:1; min-width:260px;">
-      <label for="player-search">Search players</label>
+      <label for="player-search">Add a player</label>
       <input type="search" id="player-search" placeholder="Start typing a name&hellip;" autocomplete="off">
       <div id="search-results"></div>
     </div>
   </div>
 
-  <div id="player-detail">
-    <div class="empty-state">Search for a player above to see their stats.</div>
+  <div id="chip-row" class="chip-row"></div>
+
+  <div class="table-wrap" id="compare-table-wrap">
+    <div class="empty-state">Add at least 2 players to compare.</div>
   </div>
 </main>
 
@@ -35,6 +37,6 @@
 <script src="assets/js/util.js"></script>
 <script src="assets/js/data.js"></script>
 <script src="assets/js/player-stats.js"></script>
-<script src="assets/js/page-players.js"></script>
+<script src="assets/js/page-compare.js"></script>
 </body>
 </html>
