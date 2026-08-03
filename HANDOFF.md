@@ -789,6 +789,45 @@ shows full names instead of abbreviations, same reasoning.
   a reason for lowered enthusiasm, not a final verdict (a multivariate
   regression could still find something the naive bucket split misses).
 
+## Situational trends page + big-home-dog signal
+
+- New Worker route `/trends` (`getTrends` in `worker/src/index.js`): three
+  SQL blocks over the full 1999-present `game` table, no new tables needed --
+  home underdogs bucketed by size (spread_line < -3, -3..-7, -7+), rest
+  advantage (home_rest - away_rest, 5 buckets), and divisional vs.
+  non-divisional (ATS + total O/U). **Needs a Worker redeploy** to go live.
+- New site page `trends.html` + `page-trends.js`, linked from nav/footer
+  (`components.js`). Straight tables, no charting.
+- Findings (full history, informs the "worth building" question below):
+  - Home dogs overall are a coin flip (50.5% cover, 2,514 games). But split
+    by size: dogs getting <3 or 3-7 points cover ~49%, dogs getting 7+
+    points cover **55.8%** (n=521) — a real, sizable-sample edge above the
+    ~52.4% breakeven line at standard -110 odds. This is the well-known
+    "big home dog" betting angle and it holds up in this data.
+  - Rest advantage showed no clean trend either direction (46.8%-49.8%
+    home cover % across all 5 buckets, not monotonic) — weaker than
+    expected, worth remembering before assuming "extra rest = edge."
+  - Divisional games: home teams cover less (47.6% vs 49.9% non-divisional)
+    and total tends slightly under (avg O/U margin +0.17 vs +1.02) —
+    consistent with the "familiar divisional opponents play tighter, lower
+    -scoring games" narrative.
+- Added Task "Evaluate big-home-dog flag as a model feature" — this sniff
+  test is actually stronger evidence than either the coaching-tenure or
+  draft-capital ones from earlier in the project (bigger, cleaner, more
+  games). Still needs the same walk-forward backtest before going into
+  `weekly_update.py` — same bash blocker as those two.
+
+## Playoff-round week labels (games.html)
+
+- `game_type_code` already encodes the round for weeks 19-22 (`WC`, `DIV`,
+  `CON`, `SB` -- confirmed via `SELECT game_type_code, min(week), max(week)
+  FROM game WHERE season=2024 GROUP BY game_type_code`, one round per week
+  number, no new data needed). `page-games.js`'s week dropdown now shows
+  "Wild Card" / "Divisional" / "Conference Championship" / "Super Bowl"
+  instead of "Week 19"-"Week 22" (`weekLabel()` looks up any game in that
+  week and maps its `game_type` through `PLAYOFF_ROUND_LABELS`). Regular
+  season weeks are unaffected ("Week 1".."Week 18").
+
 ## Draft capital feature — still blocked (Task #28)
 
 - Confirmed the correct source URL:

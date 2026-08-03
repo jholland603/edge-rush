@@ -22,6 +22,9 @@
  *                                           prediction (if any), each team's season-to-date
  *                                           (before this game) and full-season stat totals,
  *                                           and head-to-head history between the two teams
+ *   /trends                             -- situational ATS trends (home dogs by size,
+ *                                           rest-advantage buckets, divisional vs. not),
+ *                                           full 1999-present history, used by trends.html
  *
  * model/picks_log are written by scripts/weekly_update.py and
  * scripts/reconcile_picks.py (both rewired to write D1 directly via
@@ -115,6 +118,10 @@ export default {
         const detail = await getGameDetail(DB, decodeURIComponent(m[1]));
         if (!detail) return notFound(`no game ${m[1]}`);
         return json(detail);
+      }
+
+      if (path === "/trends") {
+        return json(await getTrends(DB));
       }
 
       return notFound();
@@ -739,5 +746,80 @@ async function getGameDetail(DB, gameId) {
     team_names,
     head_to_head: h2h.results,
     updated: new Date().toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// /trends -- situational ATS trends computed straight from `game`, full
+// 1999-present history. Each block reports a cover % from the picked side's
+// perspective (home cover % for the home-dog and rest-edge blocks, "home
+// cover %" again for divisional -- read the bucket labels). Pushes are
+// excluded from the cover % denominator but included in `n`.
+// ---------------------------------------------------------------------------
+async function getTrends(DB) {
+  const [homeDogsBySize, restEdge, divisional] = await Promise.all([
+    DB.prepare(
+      `
+      SELECT
+        CASE
+          WHEN spread_line > -3 THEN 'Home dog by < 3'
+          WHEN spread_line > -7 THEN 'Home dog by 3-7'
+          ELSE 'Home dog by 7+'
+        END AS bucket,
+        count(*) n,
+        sum(CASE WHEN result - spread_line > 0 THEN 1 ELSE 0 END) home_covers,
+        sum(CASE WHEN result - spread_line < 0 THEN 1 ELSE 0 END) away_covers,
+        sum(CASE WHEN result - spread_line = 0 THEN 1 ELSE 0 END) pushes,
+        round(100.0 * sum(CASE WHEN result - spread_line > 0 THEN 1 ELSE 0 END) /
+          NULLIF(sum(CASE WHEN result - spread_line > 0 THEN 1 ELSE 0 END) + sum(CASE WHEN result - spread_line < 0 THEN 1 ELSE 0 END), 0), 1) home_cover_pct
+      FROM game
+      WHERE spread_line < 0 AND result IS NOT NULL AND spread_line IS NOT NULL
+      GROUP BY bucket ORDER BY bucket
+      `
+    ).all(),
+    DB.prepare(
+      `
+      SELECT
+        CASE
+          WHEN home_rest - away_rest <= -4 THEN 'Away rest edge 4+ days'
+          WHEN home_rest - away_rest < 0 THEN 'Away rest edge 1-3 days'
+          WHEN home_rest - away_rest = 0 THEN 'Equal rest'
+          WHEN home_rest - away_rest < 4 THEN 'Home rest edge 1-3 days'
+          ELSE 'Home rest edge 4+ days'
+        END AS bucket,
+        count(*) n,
+        sum(CASE WHEN result - spread_line > 0 THEN 1 ELSE 0 END) home_covers,
+        sum(CASE WHEN result - spread_line < 0 THEN 1 ELSE 0 END) away_covers,
+        round(100.0 * sum(CASE WHEN result - spread_line > 0 THEN 1 ELSE 0 END) /
+          NULLIF(sum(CASE WHEN result - spread_line > 0 THEN 1 ELSE 0 END) + sum(CASE WHEN result - spread_line < 0 THEN 1 ELSE 0 END), 0), 1) home_cover_pct
+      FROM game
+      WHERE result IS NOT NULL AND spread_line IS NOT NULL AND home_rest IS NOT NULL AND away_rest IS NOT NULL
+      GROUP BY bucket ORDER BY bucket
+      `
+    ).all(),
+    DB.prepare(
+      `
+      SELECT
+        CASE WHEN div_game = 1 THEN 'Divisional' ELSE 'Non-divisional' END AS bucket,
+        count(*) n,
+        sum(CASE WHEN result - spread_line > 0 THEN 1 ELSE 0 END) home_covers,
+        sum(CASE WHEN result - spread_line < 0 THEN 1 ELSE 0 END) away_covers,
+        round(100.0 * sum(CASE WHEN result - spread_line > 0 THEN 1 ELSE 0 END) /
+          NULLIF(sum(CASE WHEN result - spread_line > 0 THEN 1 ELSE 0 END) + sum(CASE WHEN result - spread_line < 0 THEN 1 ELSE 0 END), 0), 1) home_cover_pct,
+        round(avg(total - total_line), 2) avg_ou_margin,
+        sum(CASE WHEN total - total_line > 0 THEN 1 ELSE 0 END) overs,
+        sum(CASE WHEN total - total_line < 0 THEN 1 ELSE 0 END) unders
+      FROM game
+      WHERE result IS NOT NULL AND spread_line IS NOT NULL AND div_game IS NOT NULL
+      GROUP BY bucket ORDER BY bucket
+      `
+    ).all(),
+  ]);
+
+  return {
+    updated: new Date().toISOString(),
+    home_dogs_by_size: homeDogsBySize.results,
+    rest_edge: restEdge.results,
+    divisional: divisional.results,
   };
 }

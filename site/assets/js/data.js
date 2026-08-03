@@ -54,6 +54,8 @@ const Data = {
   getPicksLog: () => fetchJSON(`${API_BASE}/picks`),
 
   getGameDetail: (gameId) => fetchJSON(`${API_BASE}/game/${encodeURIComponent(gameId)}`),
+
+  getTrends: () => fetchJSON(`${API_BASE}/trends`),
 };
 
 window.Data = Data;

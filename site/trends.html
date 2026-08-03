@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFL Model &mdash; Trends</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<site-header active="trends"></site-header>
+
+<main>
+  <div class="page-header">
+    <h1>Situational trends</h1>
+    <p>Against-the-spread splits computed straight from the full 1999&ndash;present game log. Pushes count toward
+      the sample size (n) but are excluded from the cover % itself.</p>
+  </div>
+
+  <h2>Home underdogs, by size</h2>
+  <p class="text-faint">Games where the home team was getting points. Cover % is the home team's ATS rate within
+    each bucket.</p>
+  <div class="table-wrap" id="home-dogs-wrap"><div class="loading">Loading&hellip;</div></div>
+
+  <h2>Rest advantage</h2>
+  <p class="text-faint">Bucketed by (home team's days rest) minus (away team's days rest). Cover % is the home
+    team's ATS rate.</p>
+  <div class="table-wrap" id="rest-edge-wrap"><div class="loading">Loading&hellip;</div></div>
+
+  <h2>Divisional games</h2>
+  <p class="text-faint">Division matchups vs. everything else &mdash; ATS (home cover %) and total (over/under).</p>
+  <div class="table-wrap" id="divisional-wrap"><div class="loading">Loading&hellip;</div></div>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/page-trends.js"></script>
+</body>
+</html>

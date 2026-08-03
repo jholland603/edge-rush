@@ -44,9 +44,24 @@
     modelByGameId = new Map(model.map((m) => [m.game_id, m]));
 
     const weeks = [...new Set(currentGames.map((g) => g.week))].sort((a, b) => a - b);
-    Util.fillSelect(weekSelect, weeks, { placeholder: "All weeks" });
+    const weekOptions = weeks.map((w) => ({ value: String(w), label: weekLabel(w) }));
+    Util.fillSelect(weekSelect, weekOptions, { placeholder: "All weeks" });
     const wanted = params.get("week");
     weekSelect.value = weeks.map(String).includes(wanted) ? wanted : "";
+  }
+
+  // Postseason weeks have a fixed game_type per week (REG weeks don't --
+  // those just stay "Week N"). Look up any game in that week to find its type.
+  const PLAYOFF_ROUND_LABELS = {
+    WC: "Wild Card",
+    DIV: "Divisional",
+    CON: "Conference Championship",
+    SB: "Super Bowl",
+  };
+  function weekLabel(week) {
+    const example = currentGames.find((g) => g.week === week);
+    const label = example && PLAYOFF_ROUND_LABELS[example.game_type];
+    return label || `Week ${week}`;
   }
 
   function edgeBadge(g) {
