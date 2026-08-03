@@ -1,0 +1,8 @@
+name = "edge-rush-api"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "edge-rush"
+database_id = "b3234230-248f-49fa-bf7e-965ab93cea3a"

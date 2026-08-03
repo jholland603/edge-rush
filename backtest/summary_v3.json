@@ -1,0 +1,193 @@
+{
+  "overall": {
+    "seasons_scored": [
+      2002,
+      2003,
+      2004,
+      2005,
+      2006,
+      2007,
+      2008,
+      2009,
+      2010,
+      2011,
+      2012,
+      2013,
+      2014,
+      2015,
+      2016,
+      2017,
+      2018,
+      2019,
+      2020,
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ],
+    "total_games_scored": 5537,
+    "games_flagged": 3820,
+    "flag_rate": 0.69,
+    "overall_hit_rate": 0.5113,
+    "breakeven_hit_rate_at_-110": 0.5238,
+    "rmse_model_vs_actual": 14.33,
+    "rmse_market_vs_actual": 13.178
+  },
+  "by_season": [
+    {
+      "season": 2002,
+      "games": 167,
+      "hit_rate": 0.5569
+    },
+    {
+      "season": 2003,
+      "games": 138,
+      "hit_rate": 0.5217
+    },
+    {
+      "season": 2004,
+      "games": 149,
+      "hit_rate": 0.5034
+    },
+    {
+      "season": 2005,
+      "games": 130,
+      "hit_rate": 0.4692
+    },
+    {
+      "season": 2006,
+      "games": 149,
+      "hit_rate": 0.557
+    },
+    {
+      "season": 2007,
+      "games": 145,
+      "hit_rate": 0.531
+    },
+    {
+      "season": 2008,
+      "games": 147,
+      "hit_rate": 0.4762
+    },
+    {
+      "season": 2009,
+      "games": 161,
+      "hit_rate": 0.4783
+    },
+    {
+      "season": 2010,
+      "games": 144,
+      "hit_rate": 0.5694
+    },
+    {
+      "season": 2011,
+      "games": 156,
+      "hit_rate": 0.4872
+    },
+    {
+      "season": 2012,
+      "games": 150,
+      "hit_rate": 0.5267
+    },
+    {
+      "season": 2013,
+      "games": 138,
+      "hit_rate": 0.4783
+    },
+    {
+      "season": 2014,
+      "games": 136,
+      "hit_rate": 0.5441
+    },
+    {
+      "season": 2015,
+      "games": 148,
+      "hit_rate": 0.527
+    },
+    {
+      "season": 2016,
+      "games": 158,
+      "hit_rate": 0.4937
+    },
+    {
+      "season": 2017,
+      "games": 168,
+      "hit_rate": 0.4762
+    },
+    {
+      "season": 2018,
+      "games": 156,
+      "hit_rate": 0.5897
+    },
+    {
+      "season": 2019,
+      "games": 164,
+      "hit_rate": 0.4634
+    },
+    {
+      "season": 2020,
+      "games": 188,
+      "hit_rate": 0.5266
+    },
+    {
+      "season": 2021,
+      "games": 203,
+      "hit_rate": 0.5025
+    },
+    {
+      "season": 2022,
+      "games": 175,
+      "hit_rate": 0.56
+    },
+    {
+      "season": 2023,
+      "games": 174,
+      "hit_rate": 0.454
+    },
+    {
+      "season": 2024,
+      "games": 180,
+      "hit_rate": 0.4667
+    },
+    {
+      "season": 2025,
+      "games": 196,
+      "hit_rate": 0.5204
+    }
+  ],
+  "by_edge_size": [
+    {
+      "edge_bucket": "[2, 3)",
+      "games": 619,
+      "hit_rate": 0.5057
+    },
+    {
+      "edge_bucket": "[3, 5)",
+      "games": 1234,
+      "hit_rate": 0.5211
+    },
+    {
+      "edge_bucket": "[5, 7)",
+      "games": 934,
+      "hit_rate": 0.5086
+    },
+    {
+      "edge_bucket": "[7, 100)",
+      "games": 1033,
+      "hit_rate": 0.5053
+    }
+  ],
+  "avg_coefficients": {
+    "intercept": 2.3304,
+    "pass_edge": 3.91,
+    "rush_edge": 1.7346,
+    "qb_rating_edge": -0.0018,
+    "rest_diff": 0.2008,
+    "wind": 0.0234,
+    "dome": -0.0831,
+    "qb_change_home": -3.8833,
+    "qb_change_away": 3.7616,
+    "injury_edge": -0.0058
+  }
+}

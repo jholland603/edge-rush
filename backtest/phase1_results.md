@@ -147,12 +147,47 @@ Not "close" — the calibration test is a clean, decisive result. A Brier score 
 
 This doesn't contradict the earlier finding that QB availability has a real, sensible effect (part 1 above) — it means that effect, and everything else tried, isn't yet strong or well-separated enough to rank games by confidence. That's a meaningfully different and more specific finding than "no signal at all," and it points at what would actually need to change: not more situational features bolted onto the same approach, but either materially better predictors, or a much larger sample before trusting any probability estimate this model produces.
 
+---
+
+# v3: passer rating edge (testing the Cold Hard Football Facts claim)
+
+**Question:** Cold Hard Football Facts (coldhardfootballfacts.com) has argued for ~20 years that defensive passer rating is one of the strongest predictors of winning in the NFL — teams that win the passer-rating battle in a game win it about 66% of the time by their own tracking, well ahead of raw passing yards (39%). Does a *trailing, leak-free* version of that signal — the only version that could actually inform a pregame bet — add anything on top of the EPA-based features already in v2?
+
+That's a meaningfully different (and harder) question than CHFF's own stat answers. Their "Correlation to Victory" measures whether the team with the better passer rating *in a given game* also won *that same game* — a same-game descriptive correlation, not a forecast. Some of that is close to circular: a team that's already winning forces low-percentage, desperation throws out of a trailing opponent late, which mechanically improves the leading team's defensive passer rating in the very game they were already ahead in. None of that helps place a bet before kickoff.
+
+## Method
+
+Added one feature, `qb_rating_edge`, built with the identical discipline as every other rating in this project:
+
+- Standard NFL passer rating computed per team per game from `stats_team_week` (completions, attempts, passing yards, TDs, INTs — already in the existing data, no new download needed).
+- Two leak-free EWMA ratings per team, seeded and carried over between seasons exactly like the existing EPA ratings: `r_off_rating` (own passing efficiency) and `r_def_rating_allowed` (opponent passing efficiency allowed, via the same self-join used for `def_pass_epa_play`).
+- `qb_rating_edge` nets one team's offense against the other's defense, the same structure as `pass_edge`/`rush_edge`:
+  `qb_rating_edge = (h_off_rating - a_def_rating_allowed) - (a_off_rating - h_def_rating_allowed)`
+
+Passer rating and EPA/play are different scales (roughly 0–158 vs. −0.5 to +0.5), so this feature's regression coefficient was expected to look small next to `pass_edge`'s regardless of whether it mattered — the real test is whether adding it moves hit rate or RMSE at all versus v2, not the raw coefficient size.
+
+## Result: no incremental signal
+
+| Metric | v2 (no rating edge) | v3 (+ qb_rating_edge) |
+|---|---|---|
+| Games scored | 5,537 | 5,537 |
+| Games flagged | 3,808 | 3,820 |
+| Hit rate on flagged games | 51.3% | 51.1% |
+| RMSE, model vs. actual | 14.33 | 14.33 |
+| RMSE, closing line vs. actual | 13.18 | 13.18 |
+
+`qb_rating_edge` coefficient: **−0.0018**, i.e. essentially zero once accounting for scale (typical edge values run ±20–40 rating points, so even this coefficient implies well under a tenth of a point of predicted margin) — and wrong-signed if anything (more edge should predict *more* home margin, not less). Hit rate by edge-size bucket is still flat and non-monotonic (50.6% / 52.1% / 50.9% / 50.5% across increasing edge buckets), the same pattern that ruled out edge-size-as-confidence for every other feature tried.
+
+**Conclusion:** the CHFF claim doesn't hold up in its only actionable form. Passer rating and EPA/play appear to be capturing largely the same underlying information (both are derived from a team's completions/yards/TDs/INTs), so once `pass_edge` is already in the model, a passer-rating-based defensive feature is redundant rather than additive. This doesn't mean CHFF's own stat is wrong on its own terms — same-game passer rating really does correlate with who wins that game — it means that correlation doesn't survive being turned into a forward-looking, pregame feature, which is the only version of it that could matter for betting.
+
 ## Files
 
 - `backtest/predictions.csv` / `summary.json` — v1 results.
 - `backtest/predictions_v2.csv` / `summary_v2.json` — v2 results, including all feature values and per-season regression coefficients.
+- `backtest/predictions_v3.csv` / `summary_v3.json` — v3 results (v2 + `qb_rating_edge`).
 - `backtest/calibration/calibration_summary.json` — Brier scores, calibration tables, top-N-by-probability results for both calibration models.
 - `backtest/calibration/calibrated_edge_only.csv` / `calibrated_full_feature.csv` — per-game predicted probabilities for both models.
 - `scripts/backtest.py` — v1 model.
 - `scripts/backtest_v2.py` — v2 model, fully documented and re-runnable.
+- `scripts/backtest_v3.py` — v3 model (v2 + passer rating edge), fully documented and re-runnable.
 - `scripts/calibrate.py` — calibration test, fully documented and re-runnable.

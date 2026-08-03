@@ -3,17 +3,34 @@
   const resultsEl = document.getElementById("search-results");
   const chipRow = document.getElementById("chip-row");
   const tableWrap = document.getElementById("compare-table-wrap");
+  const yearFromEl = document.getElementById("year-from");
+  const yearToEl = document.getElementById("year-to");
 
   const { groupFor, CAREER_STAT_GROUPS, statCardValue } = PlayerStats;
   const MAX_PLAYERS = 6;
 
   let playersIndex = null; // { id: {name, position, seasons} }
   let selectedIds = []; // ordered array of player_id, most-recently-added last
-  const careerCache = new Map(); // id -> career json
+  const careerCache = new Map(); // `${id}:${from}-${to}` -> career json ("full" when no range is set)
+
+  function currentRange() {
+    const from = yearFromEl.value;
+    const to = yearToEl.value;
+    return from && to ? { from, to } : null;
+  }
+
+  function cacheKey(id, range) {
+    return range ? `${id}:${range.from}-${range.to}` : `${id}:full`;
+  }
 
   function syncUrl() {
     const p = new URLSearchParams();
     if (selectedIds.length) p.set("ids", selectedIds.join(","));
+    const range = currentRange();
+    if (range) {
+      p.set("from", range.from);
+      p.set("to", range.to);
+    }
     history.replaceState(null, "", `${location.pathname}${p.toString() ? "?" + p.toString() : ""}`);
   }
 
@@ -123,19 +140,47 @@
       return;
     }
 
+    const range = currentRange();
+    if (yearFromEl.value && yearToEl.value && Number(yearFromEl.value) > Number(yearToEl.value)) {
+      Util.showEmpty(tableWrap, "“From” season is after “To” season — pick a valid range.");
+      return;
+    }
+
     Util.showLoading(tableWrap, "Loading players…");
     let careers;
     try {
       careers = await Promise.all(
         selectedIds.map(async (id) => {
-          if (!careerCache.has(id)) {
-            careerCache.set(id, await Data.getPlayerCareer(id));
+          const key = cacheKey(id, range);
+          if (!careerCache.has(key)) {
+            careerCache.set(key, await Data.getPlayerCareer(id, range));
           }
-          return careerCache.get(id);
+          return careerCache.get(key);
         })
       );
     } catch (err) {
       Util.showError(tableWrap, err);
+      return;
+    }
+
+    // A range with no games for a given player (e.g. picked before they
+    // entered the league) comes back as null from the API -- drop them from
+    // this render rather than crashing on null.career_totals.
+    const missing = [];
+    careers = careers.filter((c, i) => {
+      if (c) return true;
+      missing.push(selectedIds[i]);
+      return false;
+    });
+    if (missing.length) {
+      const names = missing.map((id) => playersIndex[id]?.name || id).join(", ");
+      chipRow.insertAdjacentHTML(
+        "beforeend",
+        `<div class="badge warn" style="margin-left:8px;">No games in range for: ${Util.escapeHtml(names)}</div>`
+      );
+    }
+    if (careers.length < 2) {
+      Util.showEmpty(tableWrap, "Add at least 2 players with games in this range to compare.");
       return;
     }
 
@@ -186,15 +231,35 @@
     if (!e.target.closest(".player-search-results")) resultsEl.innerHTML = "";
   });
 
+  yearFromEl.addEventListener("change", () => {
+    syncUrl();
+    render();
+  });
+  yearToEl.addEventListener("change", () => {
+    syncUrl();
+    render();
+  });
+
   try {
     const index = await Data.getIndex();
     playersIndex = index.players;
+
+    const seasons = [...index.seasons.players].sort((a, b) => a - b);
+    Util.fillSelect(yearFromEl, seasons, { placeholder: "Earliest" });
+    Util.fillSelect(yearToEl, seasons, { placeholder: "Latest" });
+
     const params = new URLSearchParams(location.search);
     const wanted = (params.get("ids") || "")
       .split(",")
       .map((s) => s.trim())
       .filter((id) => id && playersIndex[id]);
     selectedIds = [...new Set(wanted)].slice(0, MAX_PLAYERS);
+
+    const fromParam = params.get("from");
+    const toParam = params.get("to");
+    if (fromParam && seasons.map(String).includes(fromParam)) yearFromEl.value = fromParam;
+    if (toParam && seasons.map(String).includes(toParam)) yearToEl.value = toParam;
+
     render();
   } catch (err) {
     Util.showError(tableWrap, err);
