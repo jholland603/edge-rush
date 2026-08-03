@@ -189,30 +189,71 @@ async function getGamesSeason(DB, season) {
 // ---------------------------------------------------------------------------
 // /teams/:season -- every team_game row for the season, all 4 category
 // tables joined in, grouped by team (mirrors data/teams/{season}.json).
+//
+// NOTE: this used to be a single query with `o.*, d.*, s.*, m.*` all joined
+// together. That blew past SQLite/D1's limit on columns in one result set
+// (133+ columns across the 4 wide category tables) and every request 500'd
+// with "too many columns in result set" -- confirmed directly against D1.
+// Fixed by running 5 narrower queries (hub + one per category table, each
+// well under the limit) and merging them here by team_game_id instead.
 // ---------------------------------------------------------------------------
 async function getTeamsSeason(DB, season) {
-  const { results } = await DB.prepare(
-    `
-    SELECT tg.team, tg.opponent_team, g.week, g.game_type_code AS season_type, tg.game_id,
-           o.*, d.*, s.*, m.*
-    FROM team_game tg
-    JOIN game g ON g.game_id = tg.game_id
-    LEFT JOIN team_game_offense o ON o.team_game_id = tg.team_game_id
-    LEFT JOIN team_game_defense d ON d.team_game_id = tg.team_game_id
-    LEFT JOIN team_game_special_teams s ON s.team_game_id = tg.team_game_id
-    LEFT JOIN team_game_misc m ON m.team_game_id = tg.team_game_id
-    WHERE g.season = ?
-    ORDER BY tg.team, g.week
-    `
-  )
-    .bind(season)
-    .all();
+  const [hub, offense, defense, special, misc] = await Promise.all([
+    DB.prepare(
+      `SELECT tg.team_game_id, tg.team, tg.opponent_team, g.week, g.game_type_code AS season_type, tg.game_id
+       FROM team_game tg JOIN game g ON g.game_id = tg.game_id
+       WHERE g.season = ? ORDER BY tg.team, g.week`
+    )
+      .bind(season)
+      .all(),
+    DB.prepare(
+      `SELECT o.* FROM team_game_offense o
+       JOIN team_game tg ON tg.team_game_id = o.team_game_id JOIN game g ON g.game_id = tg.game_id
+       WHERE g.season = ?`
+    )
+      .bind(season)
+      .all(),
+    DB.prepare(
+      `SELECT d.* FROM team_game_defense d
+       JOIN team_game tg ON tg.team_game_id = d.team_game_id JOIN game g ON g.game_id = tg.game_id
+       WHERE g.season = ?`
+    )
+      .bind(season)
+      .all(),
+    DB.prepare(
+      `SELECT s.* FROM team_game_special_teams s
+       JOIN team_game tg ON tg.team_game_id = s.team_game_id JOIN game g ON g.game_id = tg.game_id
+       WHERE g.season = ?`
+    )
+      .bind(season)
+      .all(),
+    DB.prepare(
+      `SELECT m.* FROM team_game_misc m
+       JOIN team_game tg ON tg.team_game_id = m.team_game_id JOIN game g ON g.game_id = tg.game_id
+       WHERE g.season = ?`
+    )
+      .bind(season)
+      .all(),
+  ]);
+
+  const byId = new Map();
+  const teamById = new Map();
+  for (const row of hub.results) {
+    const { team_game_id, team, ...rest } = row;
+    byId.set(team_game_id, rest);
+    teamById.set(team_game_id, team);
+  }
+  for (const catResult of [offense, defense, special, misc]) {
+    for (const row of catResult.results) {
+      const { team_game_id, ...rest } = row;
+      const target = byId.get(team_game_id);
+      if (target) Object.assign(target, rest);
+    }
+  }
 
   const teams = {};
-  for (const row of results) {
-    const { team, ...rest } = row;
-    delete rest.team_game_id; // join-key column, duplicated across o/d/s/m, not needed in output
-    (teams[team] ||= []).push(rest);
+  for (const [id, row] of byId) {
+    (teams[teamById.get(id)] ||= []).push(row);
   }
 
   return {
@@ -228,52 +269,84 @@ async function getTeamsSeason(DB, season) {
 // category tables joined in, grouped by player (mirrors
 // data/players/season/{season}.json). Display names are fetched in one
 // batched follow-up query rather than joining `player` per row.
+//
+// Same fix as getTeamsSeason above: 5 narrower queries (hub + one per
+// category table) merged here by player_game_id, instead of one query with
+// `o.*, d.*, s.*, m.*` all joined together -- that hit D1's column-count
+// limit and 500'd on every request.
 // ---------------------------------------------------------------------------
 async function getPlayersSeason(DB, season) {
-  const { results } = await DB.prepare(
-    `
-    SELECT pg.player_id, pg.position_code AS position, pg.team, pg.opponent_team,
-           g.week, g.game_type_code AS season_type, pg.game_id,
-           o.*, d.*, s.*, m.*
-    FROM player_game pg
-    JOIN game g ON g.game_id = pg.game_id
-    LEFT JOIN player_game_offense o ON o.player_game_id = pg.player_game_id
-    LEFT JOIN player_game_defense d ON d.player_game_id = pg.player_game_id
-    LEFT JOIN player_game_special_teams s ON s.player_game_id = pg.player_game_id
-    LEFT JOIN player_game_misc m ON m.player_game_id = pg.player_game_id
-    WHERE g.season = ?
-    ORDER BY pg.player_id, g.week
-    `
-  )
-    .bind(season)
-    .all();
+  const [hub, offense, defense, special, misc] = await Promise.all([
+    DB.prepare(
+      `SELECT pg.player_game_id, pg.player_id, p.display_name AS player_display_name,
+              pg.position_code AS position, pg.team, pg.opponent_team,
+              g.week, g.game_type_code AS season_type, pg.game_id
+       FROM player_game pg
+       JOIN game g ON g.game_id = pg.game_id
+       JOIN player p ON p.player_id = pg.player_id
+       WHERE g.season = ? ORDER BY pg.player_id, g.week`
+    )
+      .bind(season)
+      .all(),
+    DB.prepare(
+      `SELECT o.* FROM player_game_offense o
+       JOIN player_game pg ON pg.player_game_id = o.player_game_id JOIN game g ON g.game_id = pg.game_id
+       WHERE g.season = ?`
+    )
+      .bind(season)
+      .all(),
+    DB.prepare(
+      `SELECT d.* FROM player_game_defense d
+       JOIN player_game pg ON pg.player_game_id = d.player_game_id JOIN game g ON g.game_id = pg.game_id
+       WHERE g.season = ?`
+    )
+      .bind(season)
+      .all(),
+    DB.prepare(
+      `SELECT s.* FROM player_game_special_teams s
+       JOIN player_game pg ON pg.player_game_id = s.player_game_id JOIN game g ON g.game_id = pg.game_id
+       WHERE g.season = ?`
+    )
+      .bind(season)
+      .all(),
+    DB.prepare(
+      `SELECT m.* FROM player_game_misc m
+       JOIN player_game pg ON pg.player_game_id = m.player_game_id JOIN game g ON g.game_id = pg.game_id
+       WHERE g.season = ?`
+    )
+      .bind(season)
+      .all(),
+  ]);
+
+  const byId = new Map();
+  const playerIdById = new Map();
+  for (const row of hub.results) {
+    const { player_game_id, player_id, player_display_name, position, team, ...rest } = row;
+    // "current team" for the season header = the team on this player's
+    // first game that season (matches the original build_json.py logic).
+    byId.set(player_game_id, { player_display_name, position, team, weekRow: rest });
+    playerIdById.set(player_game_id, player_id);
+  }
+  for (const catResult of [offense, defense, special, misc]) {
+    for (const row of catResult.results) {
+      const { player_game_id, ...rest } = row;
+      const target = byId.get(player_game_id);
+      if (target) Object.assign(target.weekRow, rest);
+    }
+  }
 
   const players = {};
-  for (const row of results) {
-    const { player_id, position, ...rest } = row;
-    delete rest.player_game_id;
+  for (const [pgid, { player_display_name, position, team, weekRow }] of byId) {
+    const player_id = playerIdById.get(pgid);
     let p = players[player_id];
     if (!p) {
-      // "current team" for the season header = the team on this player's
-      // first game that season (matches the original build_json.py logic).
-      p = { player_display_name: null, position, team: row.team, weeks: [] };
+      p = { player_display_name, position, team, weeks: [] };
       players[player_id] = p;
     }
-    p.weeks.push(rest);
+    p.weeks.push(weekRow);
   }
 
   const ids = Object.keys(players);
-  if (ids.length) {
-    const placeholders = ids.map(() => "?").join(",");
-    const { results: names } = await DB.prepare(
-      `SELECT player_id, display_name FROM player WHERE player_id IN (${placeholders})`
-    )
-      .bind(...ids)
-      .all();
-    for (const n of names) {
-      if (players[n.player_id]) players[n.player_id].player_display_name = n.display_name;
-    }
-  }
 
   return {
     season,
