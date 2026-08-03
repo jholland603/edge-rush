@@ -56,6 +56,21 @@ const Data = {
   getGameDetail: (gameId) => fetchJSON(`${API_BASE}/game/${encodeURIComponent(gameId)}`),
 
   getTrends: () => fetchJSON(`${API_BASE}/trends`),
+
+  getLeadersCatalog: () => fetchJSON(`${API_BASE}/leaders/catalog`),
+
+  getPlayerLeaders: ({ stat, from, to, position, limit }) => {
+    const p = new URLSearchParams({ stat, from, to });
+    if (position) p.set("position", position);
+    if (limit) p.set("limit", limit);
+    return fetchJSON(`${API_BASE}/leaders/players?${p.toString()}`);
+  },
+
+  getTeamLeaders: ({ stat, from, to, limit }) => {
+    const p = new URLSearchParams({ stat, from, to });
+    if (limit) p.set("limit", limit);
+    return fetchJSON(`${API_BASE}/leaders/teams?${p.toString()}`);
+  },
 };
 
 window.Data = Data;

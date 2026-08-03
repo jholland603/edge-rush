@@ -789,6 +789,38 @@ shows full names instead of abbreviations, same reasoning.
   a reason for lowered enthusiasm, not a final verdict (a multivariate
   regression could still find something the naive bucket split misses).
 
+## Leaders page (players + teams, any season range)
+
+- New Worker routes: `/leaders/catalog` (available categories), `/leaders/players?stat=&from=&to=&position=&limit=`,
+  `/leaders/teams?stat=&from=&to=&limit=`. Two whitelists (`PLAYER_STAT_CATALOG`,
+  `TEAM_STAT_CATALOG` in `worker/src/index.js`) map a stat id to a table +
+  column -- table/column names only ever come from these server-side
+  constants, never interpolated from the request, even though the SQL is
+  built dynamically per catalog entry (no injection surface). "Points
+  Scored" (team scope) is special-cased since it comes from `game.home_score`
+  /`away_score`, not a `team_game_*` column.
+- Tried a "player's most recent career position" lookup for the position
+  column first (correlated subquery per player) -- added ~1.5s per query.
+  Switched to `MAX(pg.position_code)` over just the games in the selected
+  range instead: same display value in the overwhelming common case (players
+  essentially never change position mid-range) and no perf hit. Unfiltered,
+  full-history leaderboard queries (e.g. rushing yards, no position filter,
+  1999-2025) still take ~1.4-1.6s regardless -- that's just the actual data
+  volume (~1.8M rows read across the joins for a 26-season scan), not a
+  fixable inefficiency. Same ballpark as `/index`'s known-slow response;
+  the 5-minute Cache-Control on Worker responses absorbs repeat hits.
+- New page `leaders.html` + `page-leaders.js`: scope toggle (players/teams),
+  category dropdown (sourced from `/leaders/catalog`, not hardcoded, so
+  adding a catalog entry server-side is enough), from/to season selects, and
+  for player categories with a natural position hint (e.g. QB for passing
+  yards, K for FG made) a "Only QBs" checkbox that's on by default but can
+  be unchecked to see the stat across all positions.
+- **Deliberately not in the main nav or footer** -- linked instead from
+  `players.html` ("See stat leaders &rarr;", `?scope=players`) and
+  `teams.html` ("See team leaders &rarr;", `?scope=teams`), same
+  discoverable-but-not-top-level treatment as the Compare page. This was an
+  explicit choice from a multiple-choice question, not a default.
+
 ## Player stat picks were curated, not exhaustive -- added QB efficiency stats
 
 - `site/assets/js/player-stats.js` (`CAREER_STAT_GROUPS`, `WEEK_COLUMNS`)

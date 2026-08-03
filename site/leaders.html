@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFL Model &mdash; Leaders</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<site-header></site-header>
+
+<main>
+  <div class="page-header">
+    <h1>Leaders</h1>
+    <p>Top players and teams in a stat category over any range of seasons since 1999.</p>
+  </div>
+
+  <div class="controls">
+    <div class="control">
+      <label for="scope-select">Scope</label>
+      <select id="scope-select">
+        <option value="players">Players</option>
+        <option value="teams">Teams</option>
+      </select>
+    </div>
+    <div class="control" style="flex:1; min-width:200px;">
+      <label for="stat-select">Category</label>
+      <select id="stat-select"></select>
+    </div>
+    <div class="control">
+      <label for="from-select">From season</label>
+      <select id="from-select"></select>
+    </div>
+    <div class="control">
+      <label for="to-select">To season</label>
+      <select id="to-select"></select>
+    </div>
+    <div class="control" id="position-control" style="display:none;">
+      <label for="position-toggle" style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
+        <input type="checkbox" id="position-toggle" style="width:auto;">
+        <span id="position-toggle-label">Only that position</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="table-wrap" id="leaders-table-wrap">
+    <div class="loading">Loading&hellip;</div>
+  </div>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/page-leaders.js"></script>
+</body>
+</html>

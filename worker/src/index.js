@@ -25,6 +25,11 @@
  *   /trends                             -- situational ATS trends (home dogs by size,
  *                                           rest-advantage buckets, divisional vs. not),
  *                                           full 1999-present history, used by trends.html
+ *   /leaders/catalog                    -- available leaderboard categories (players + teams)
+ *   /leaders/players?stat=&from=&to=&position=&limit=
+ *                                        -- top players by summed stat over a season range
+ *   /leaders/teams?stat=&from=&to=&limit=
+ *                                        -- top teams by summed stat over a season range
  *
  * model/picks_log are written by scripts/weekly_update.py and
  * scripts/reconcile_picks.py (both rewired to write D1 directly via
@@ -122,6 +127,31 @@ export default {
 
       if (path === "/trends") {
         return json(await getTrends(DB));
+      }
+
+      if (path === "/leaders/catalog") {
+        return json(getLeadersCatalog());
+      }
+      if (path === "/leaders/players") {
+        const statId = url.searchParams.get("stat");
+        const from = Number(url.searchParams.get("from"));
+        const to = Number(url.searchParams.get("to"));
+        const position = url.searchParams.get("position") || null;
+        const limit = Math.min(Number(url.searchParams.get("limit")) || 25, 100);
+        if (!statId || !from || !to) return json({ error: "stat, from, and to are required" }, 400);
+        const result = await getPlayerLeaders(DB, statId, from, to, position, limit);
+        if (result === null) return notFound(`unknown stat ${statId}`);
+        return json(result);
+      }
+      if (path === "/leaders/teams") {
+        const statId = url.searchParams.get("stat");
+        const from = Number(url.searchParams.get("from"));
+        const to = Number(url.searchParams.get("to"));
+        const limit = Math.min(Number(url.searchParams.get("limit")) || 25, 32);
+        if (!statId || !from || !to) return json({ error: "stat, from, and to are required" }, 400);
+        const result = await getTeamLeaders(DB, statId, from, to, limit);
+        if (result === null) return notFound(`unknown stat ${statId}`);
+        return json(result);
       }
 
       return notFound();
@@ -828,4 +858,119 @@ async function getTrends(DB) {
     rest_edge: restEdge.results,
     divisional: divisional.results,
   };
+}
+
+// ---------------------------------------------------------------------------
+// /leaders/* -- top players/teams by a summed stat over a season range.
+// Both catalogs are a deliberately curated whitelist (mirrors the same
+// curation philosophy as site/assets/js/player-stats.js) -- table/column
+// names come from these server-side constants only, never interpolated
+// from the request, so there's no injection surface even though the query
+// itself is built dynamically per catalog entry.
+// ---------------------------------------------------------------------------
+const PLAYER_STAT_CATALOG = [
+  { id: "passing_yards", label: "Passing Yards", table: "player_game_offense", column: "passing_yards", position: "QB" },
+  { id: "passing_tds", label: "Passing TDs", table: "player_game_offense", column: "passing_tds", position: "QB" },
+  { id: "passing_interceptions", label: "Interceptions Thrown", table: "player_game_offense", column: "passing_interceptions", position: "QB" },
+  { id: "rushing_yards", label: "Rushing Yards", table: "player_game_offense", column: "rushing_yards" },
+  { id: "rushing_tds", label: "Rushing TDs", table: "player_game_offense", column: "rushing_tds" },
+  { id: "receptions", label: "Receptions", table: "player_game_offense", column: "receptions" },
+  { id: "receiving_yards", label: "Receiving Yards", table: "player_game_offense", column: "receiving_yards" },
+  { id: "receiving_tds", label: "Receiving TDs", table: "player_game_offense", column: "receiving_tds" },
+  { id: "def_sacks", label: "Sacks", table: "player_game_defense", column: "def_sacks" },
+  { id: "def_interceptions", label: "Interceptions (Defense)", table: "player_game_defense", column: "def_interceptions" },
+  { id: "def_tackles_solo", label: "Solo Tackles", table: "player_game_defense", column: "def_tackles_solo" },
+  { id: "def_tackles_for_loss", label: "Tackles for Loss", table: "player_game_defense", column: "def_tackles_for_loss" },
+  { id: "def_fumbles_forced", label: "Forced Fumbles", table: "player_game_defense", column: "def_fumbles_forced" },
+  { id: "fg_made", label: "Field Goals Made", table: "player_game_special_teams", column: "fg_made", position: "K" },
+  { id: "fantasy_points_ppr", label: "Fantasy Points (PPR)", table: "player_game_offense", column: "fantasy_points_ppr" },
+];
+
+const TEAM_STAT_CATALOG = [
+  { id: "points_scored", label: "Points Scored" }, // special-cased below, not column-based
+  { id: "passing_yards", label: "Passing Yards", table: "team_game_offense", column: "passing_yards" },
+  { id: "rushing_yards", label: "Rushing Yards", table: "team_game_offense", column: "rushing_yards" },
+  { id: "passing_tds", label: "Passing TDs", table: "team_game_offense", column: "passing_tds" },
+  { id: "def_sacks", label: "Sacks", table: "team_game_defense", column: "def_sacks" },
+  { id: "def_interceptions", label: "Interceptions (Defense)", table: "team_game_defense", column: "def_interceptions" },
+  { id: "def_tackles_for_loss", label: "Tackles for Loss", table: "team_game_defense", column: "def_tackles_for_loss" },
+  { id: "def_fumbles_forced", label: "Forced Fumbles", table: "team_game_defense", column: "def_fumbles_forced" },
+  { id: "penalties", label: "Penalties", table: "team_game_misc", column: "penalties" },
+  { id: "penalty_yards", label: "Penalty Yards", table: "team_game_misc", column: "penalty_yards" },
+];
+
+function getLeadersCatalog() {
+  return {
+    players: PLAYER_STAT_CATALOG.map(({ id, label, position }) => ({ id, label, position: position || null })),
+    teams: TEAM_STAT_CATALOG.map(({ id, label }) => ({ id, label })),
+  };
+}
+
+async function getPlayerLeaders(DB, statId, from, to, position, limit) {
+  const spec = PLAYER_STAT_CATALOG.find((s) => s.id === statId);
+  if (!spec) return null;
+
+  // Position shown is just whichever position_code appears on this player's
+  // games within the selected range (MAX is an arbitrary but cheap and
+  // almost-always-stable pick -- players essentially never change position
+  // mid-range). A "true most recent career position" lookup was tried first
+  // but cost an extra ~1.5s per query (correlated subquery per player), not
+  // worth it for a display-only field.
+  const posFilter = position ? "AND pg.position_code = ?" : "";
+  const sql = `
+    SELECT pg.player_id, p.display_name AS name, MAX(pg.position_code) AS position,
+           SUM(t.${spec.column}) AS total, COUNT(*) AS games
+    FROM player_game pg
+    JOIN game g ON g.game_id = pg.game_id
+    JOIN ${spec.table} t ON t.player_game_id = pg.player_game_id
+    JOIN player p ON p.player_id = pg.player_id
+    WHERE g.season BETWEEN ? AND ? ${posFilter}
+    GROUP BY pg.player_id
+    HAVING total IS NOT NULL
+    ORDER BY total DESC
+    LIMIT ?
+  `;
+  const params = position ? [from, to, position, limit] : [from, to, limit];
+  const { results } = await DB.prepare(sql).bind(...params).all();
+  return { stat: statId, label: spec.label, from, to, position: position || null, leaders: results };
+}
+
+async function getTeamLeaders(DB, statId, from, to, limit) {
+  if (statId === "points_scored") {
+    const { results } = await DB.prepare(
+      `
+      SELECT team, tn.team_name, SUM(pts) AS total, COUNT(*) AS games
+      FROM (
+        SELECT home_team AS team, home_score AS pts, season FROM game WHERE home_score IS NOT NULL
+        UNION ALL
+        SELECT away_team AS team, away_score AS pts, season FROM game WHERE away_score IS NOT NULL
+      ) x
+      JOIN team tn ON tn.team_abbr = x.team
+      WHERE season BETWEEN ? AND ?
+      GROUP BY team
+      ORDER BY total DESC
+      LIMIT ?
+      `
+    ).bind(from, to, limit).all();
+    return { stat: statId, label: "Points Scored", from, to, leaders: results };
+  }
+
+  const spec = TEAM_STAT_CATALOG.find((s) => s.id === statId);
+  if (!spec) return null;
+
+  const { results } = await DB.prepare(
+    `
+    SELECT tg.team, tn.team_name, SUM(t.${spec.column}) AS total, COUNT(*) AS games
+    FROM team_game tg
+    JOIN game g ON g.game_id = tg.game_id
+    JOIN ${spec.table} t ON t.team_game_id = tg.team_game_id
+    JOIN team tn ON tn.team_abbr = tg.team
+    WHERE g.season BETWEEN ? AND ?
+    GROUP BY tg.team
+    HAVING total IS NOT NULL
+    ORDER BY total DESC
+    LIMIT ?
+    `
+  ).bind(from, to, limit).all();
+  return { stat: statId, label: spec.label, from, to, leaders: results };
 }

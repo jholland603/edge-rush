@@ -133,11 +133,10 @@ function statCardValue(totals, spec) {
 }
 
 // ---- weekly season-log table columns, per position group ----
-const OFFENSE_WEEK_COLUMNS = [
-  { label: "Cmp/Att", render: (w) => `${w.completions ?? 0}/${w.attempts ?? 0}` },
-  { label: "Pass Yds", render: (w) => w.passing_yards ?? 0 },
-  { label: "Pass TD", render: (w) => w.passing_tds ?? 0 },
-  { label: "INT", render: (w) => w.passing_interceptions ?? 0 },
+// Each group leads with the stats that actually matter for that position;
+// passing columns are only ever real for QBs (the odd trick-play pass from
+// an RB/WR is rare enough to push to the end rather than lead with it).
+const RB_WEEK_COLUMNS = [
   { label: "Car", render: (w) => w.carries ?? 0 },
   { label: "Rush Yds", render: (w) => w.rushing_yards ?? 0 },
   { label: "Y/C", render: (w) => Util.num(w.carries ? w.rushing_yards / w.carries : null, 1) },
@@ -147,6 +146,25 @@ const OFFENSE_WEEK_COLUMNS = [
   { label: "Y/R", render: (w) => Util.num(w.receptions ? w.receiving_yards / w.receptions : null, 1) },
   { label: "Rec TD", render: (w) => w.receiving_tds ?? 0 },
   { label: "Fantasy (PPR)", render: (w) => Util.num(w.fantasy_points_ppr, 1) },
+  { label: "Cmp/Att", render: (w) => `${w.completions ?? 0}/${w.attempts ?? 0}` },
+  { label: "Pass Yds", render: (w) => w.passing_yards ?? 0 },
+  { label: "Pass TD", render: (w) => w.passing_tds ?? 0 },
+  { label: "INT", render: (w) => w.passing_interceptions ?? 0 },
+];
+const WR_TE_WEEK_COLUMNS = [
+  { label: "Rec/Tgt", render: (w) => `${w.receptions ?? 0}/${w.targets ?? 0}` },
+  { label: "Rec Yds", render: (w) => w.receiving_yards ?? 0 },
+  { label: "Y/R", render: (w) => Util.num(w.receptions ? w.receiving_yards / w.receptions : null, 1) },
+  { label: "Rec TD", render: (w) => w.receiving_tds ?? 0 },
+  { label: "Car", render: (w) => w.carries ?? 0 },
+  { label: "Rush Yds", render: (w) => w.rushing_yards ?? 0 },
+  { label: "Y/C", render: (w) => Util.num(w.carries ? w.rushing_yards / w.carries : null, 1) },
+  { label: "Rush TD", render: (w) => w.rushing_tds ?? 0 },
+  { label: "Fantasy (PPR)", render: (w) => Util.num(w.fantasy_points_ppr, 1) },
+  { label: "Cmp/Att", render: (w) => `${w.completions ?? 0}/${w.attempts ?? 0}` },
+  { label: "Pass Yds", render: (w) => w.passing_yards ?? 0 },
+  { label: "Pass TD", render: (w) => w.passing_tds ?? 0 },
+  { label: "INT", render: (w) => w.passing_interceptions ?? 0 },
 ];
 const QB_WEEK_COLUMNS = [
   { label: "Cmp/Att", render: (w) => `${w.completions ?? 0}/${w.attempts ?? 0}` },
@@ -162,9 +180,9 @@ const QB_WEEK_COLUMNS = [
 ];
 const WEEK_COLUMNS = {
   QB: QB_WEEK_COLUMNS,
-  RB: OFFENSE_WEEK_COLUMNS,
-  WR: OFFENSE_WEEK_COLUMNS,
-  TE: OFFENSE_WEEK_COLUMNS,
+  RB: RB_WEEK_COLUMNS,
+  WR: WR_TE_WEEK_COLUMNS,
+  TE: WR_TE_WEEK_COLUMNS,
   DL: [
     { label: "Tackles (Ast)", render: (w) => `${w.def_tackles_solo ?? 0} (${w.def_tackle_assists ?? 0})` },
     { label: "TFL", render: (w) => w.def_tackles_for_loss ?? 0 },
