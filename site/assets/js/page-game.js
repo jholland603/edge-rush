@@ -27,12 +27,12 @@
     return diff > 0 ? "Over" : "Under";
   }
 
-  function renderSummary(g) {
+  function renderSummary(g, teamNames) {
     const played = g.home_score !== null && g.home_score !== undefined;
     const ats = atsResult(g);
     const ou = ouResult(g);
 
-    titleEl.textContent = `${g.away_team} @ ${g.home_team}`;
+    titleEl.textContent = `${teamNames[g.away_team] || g.away_team} @ ${teamNames[g.home_team] || g.home_team}`;
     subtitleEl.textContent = `${g.season} · Week ${g.week} · ${g.game_type} · ${Util.formatDate(g.gameday)}`;
 
     const weather = [];
@@ -48,8 +48,8 @@
           <div class="label">Final score (away&ndash;home)</div>
         </div>
         <div class="stat-card card">
-          <div class="value">${Util.spreadForTeam(g.spread_line, true)}</div>
-          <div class="label">Home closing spread${ats ? ` &mdash; ${Util.escapeHtml(ats)}` : ""}</div>
+          <div class="value">${Util.favoredTeamLine(g.spread_line, g.home_team, g.away_team)}</div>
+          <div class="label">Closing spread${ats ? ` &mdash; ${Util.escapeHtml(ats)}` : ""}</div>
         </div>
         <div class="stat-card card">
           <div class="value">${Util.num(g.total_line, 1)}</div>
@@ -63,15 +63,16 @@
     `;
   }
 
-  function renderModel(model) {
+  function renderModel(model, g) {
     if (!model) {
       modelWrap.innerHTML = "";
       return;
     }
     modelWrap.innerHTML = `
       <div class="banner ${model.flagged ? "warn" : "info"}">
-        <strong>Model prediction:</strong> spread ${Util.signed(model.model_spread, 1)} vs. market
-        ${Util.signed(model.market_spread, 1)} &mdash; edge ${Util.signed(model.edge, 1)} pts
+        <strong>Model prediction:</strong> favors ${Util.favoredTeamLine(model.model_spread, g.home_team, g.away_team)}
+        vs. a market of ${Util.favoredTeamLine(model.market_spread, g.home_team, g.away_team)}
+        &mdash; edge favors ${Util.favoredTeamLine(model.edge, g.home_team, g.away_team)}
         ${model.p_home_covers !== null && model.p_home_covers !== undefined ? `, P(home covers) ${Util.pct(model.p_home_covers, 1)}` : ""}.
         ${model.flagged ? "This game was flagged (|edge| &ge; 2.0 pts)." : "Not flagged."}
         <a href="picks.html">See full picks log &rarr;</a>
@@ -140,8 +141,11 @@
   }
 
   function renderH2H(detail, games) {
+    const teamNames = detail.team_names || {};
     if (!games.length) {
-      Util.showEmpty(h2hWrap, `No prior meetings between ${detail.away.team} and ${detail.home.team} in the data set.`);
+      const awayName = teamNames[detail.away.team] || detail.away.team;
+      const homeName = teamNames[detail.home.team] || detail.home.team;
+      Util.showEmpty(h2hWrap, `No prior meetings between ${Util.escapeHtml(awayName)} and ${Util.escapeHtml(homeName)} in the data set.`);
       return;
     }
     const rows = games
@@ -151,9 +155,9 @@
           <tr>
             <td>${g.season} Wk${g.week}</td>
             <td>${Util.formatDate(g.gameday)}</td>
-            <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(g.away_team)} @ ${Util.escapeHtml(g.home_team)}</a></td>
+            <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(teamNames[g.away_team] || g.away_team)} @ ${Util.escapeHtml(teamNames[g.home_team] || g.home_team)}</a></td>
             <td class="num">${g.away_score}&ndash;${g.home_score}</td>
-            <td class="num">${Util.spreadForTeam(g.spread_line, true)}</td>
+            <td class="num">${Util.favoredTeamLine(g.spread_line, g.home_team, g.away_team)}</td>
             <td>${ats ? Util.escapeHtml(ats) : "-"}</td>
           </tr>
         `;
@@ -165,7 +169,7 @@
         <thead>
           <tr>
             <th>Week</th><th>Date</th><th>Matchup</th>
-            <th class="num">Score (Away&ndash;Home)</th><th class="num">Home Line</th><th>ATS</th>
+            <th class="num">Score (Away&ndash;Home)</th><th class="num">Line</th><th>ATS</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -183,8 +187,8 @@
 
   try {
     const detail = await Data.getGameDetail(gameId);
-    renderSummary(detail.game);
-    renderModel(detail.model);
+    renderSummary(detail.game, detail.team_names || {});
+    renderModel(detail.model, detail.game);
     renderCompare(detail);
     renderH2H(detail, detail.head_to_head);
   } catch (err) {

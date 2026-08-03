@@ -7,6 +7,11 @@
   const params = new URLSearchParams(location.search);
   let currentGames = [];
   let modelByGameId = new Map();
+  let teamNames = {};
+
+  function teamName(abbr) {
+    return teamNames[abbr] || abbr;
+  }
 
   function syncUrl() {
     const p = new URLSearchParams();
@@ -18,6 +23,7 @@
 
   async function loadSeasons() {
     const index = await Data.getIndex();
+    teamNames = index.team_names || {};
     const seasons = [...index.seasons.games].sort((a, b) => b - a);
     Util.fillSelect(seasonSelect, seasons);
     const wanted = Number(params.get("season"));
@@ -47,7 +53,7 @@
     const m = modelByGameId.get(g.game_id);
     if (!m) return `<span class="badge neutral">-</span>`;
     const cls = m.flagged ? "positive" : "neutral";
-    return `<span class="badge ${cls}">${Util.signed(m.edge, 1)}</span>`;
+    return `<span class="badge ${cls}">${Util.favoredTeamLine(m.edge, g.home_team, g.away_team)}</span>`;
   }
 
   function atsBadge(g) {
@@ -92,9 +98,9 @@
             <td>${g.week}</td>
             <td>${Util.escapeHtml(g.game_type)}</td>
             <td>${Util.formatDate(g.gameday)}</td>
-            <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(g.away_team)} @ ${Util.escapeHtml(g.home_team)}</a></td>
+            <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(teamName(g.away_team))} @ ${Util.escapeHtml(teamName(g.home_team))}</a></td>
             <td class="num">${score}</td>
-            <td class="num">${Util.signed(g.spread_line, 1)}</td>
+            <td class="num">${Util.favoredTeamLine(g.spread_line, g.home_team, g.away_team)}</td>
             <td class="num">${Util.num(g.total_line, 1)}</td>
             <td>${atsBadge(g)}</td>
             <td>${ouBadge(g)}</td>
@@ -109,7 +115,7 @@
         <thead>
           <tr>
             <th>Wk</th><th>Type</th><th>Date</th><th>Matchup</th>
-            <th class="num">Score (Away&ndash;Home)</th><th class="num">Home Line</th><th class="num">Total</th>
+            <th class="num">Score (Away&ndash;Home)</th><th class="num">Line</th><th class="num">Total</th>
             <th>ATS</th><th>O/U</th><th class="num">Model Edge</th>
           </tr>
         </thead>

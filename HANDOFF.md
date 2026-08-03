@@ -609,6 +609,18 @@ overlay and a click-through to a new single-game detail page.
 - **Redeploy the Worker** (`wrangler deploy` from `worker/`) to pick up
   these two new routes -- same as any other `worker/src/index.js` change.
 
+**Follow-up UI polish:** `/index` now also returns `team_names` (`{ABBR:
+"Full Name"}`, from `team.team_name`). `Util.favoredTeamLine(value, homeAbbr,
+awayAbbr)` (new, in `util.js`) labels which team a "positive = home
+favored" value (spread_line or model edge) actually favors, bookmaker-style
+(favorite always shown negative, e.g. `"NE -3.5"` instead of a bare `+3.5`)
+-- used for `games.html`'s Line/Model Edge columns and `game.html`'s spread/
+model-prediction display and head-to-head Line column. `games.html`'s
+Matchup column and `game.html`'s title/head-to-head Matchup column now show
+full team names (via `team_names`); tight tabular columns (Line, Model Edge,
+the team-comparison table's headers) stay abbreviated on purpose -- this was
+an explicit user preference, not a general "always spell out teams" rule.
+
 ## Useful file map
 
 - `scripts/build_d1_sql.py` — regenerates all the `d1/sql/*.sql` files from

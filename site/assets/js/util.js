@@ -40,6 +40,21 @@ const Util = {
     return Util.signed(val, 1);
   },
 
+  /**
+   * Label WHICH team is favored, bookmaker-style (favorite always shown
+   * negative), e.g. "NE -3.5" or "SEA +3.5" -- same idea for `spread_line`
+   * (positive = home favored) and model `edge` (positive = model favors
+   * home relative to the market). Returns "PICK" at exactly 0, "-" for
+   * null/undefined/NaN.
+   */
+  favoredTeamLine(value, homeAbbr, awayAbbr, decimals = 1) {
+    if (value === null || value === undefined || Number.isNaN(value)) return "-";
+    const n = Number(value);
+    if (n === 0) return "PICK";
+    const team = n > 0 ? homeAbbr : awayAbbr;
+    return `${Util.escapeHtml(team)} ${(-Math.abs(n)).toFixed(decimals)}`;
+  },
+
   formatDate(dateStr) {
     if (!dateStr) return "-";
     const d = new Date(`${dateStr}T00:00:00`);

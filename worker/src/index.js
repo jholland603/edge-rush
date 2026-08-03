@@ -138,7 +138,7 @@ async function getIndex(DB) {
     DB.prepare(
       "SELECT DISTINCT g.season AS season FROM player_game pg JOIN game g ON g.game_id = pg.game_id ORDER BY season"
     ).all(),
-    DB.prepare("SELECT team_abbr FROM team ORDER BY team_abbr").all(),
+    DB.prepare("SELECT team_abbr, team_name FROM team ORDER BY team_abbr").all(),
     // Single pass over player_game+game for "most recent position" (window
     // function, not a per-player correlated subquery -- with 11,366 players
     // that would be 11,366 separate scans instead of one) and a second pass
@@ -174,6 +174,9 @@ async function getIndex(DB) {
     };
   }
 
+  const team_names = {};
+  for (const row of teams.results) team_names[row.team_abbr] = row.team_name;
+
   return {
     updated: new Date().toISOString(),
     seasons: {
@@ -182,6 +185,7 @@ async function getIndex(DB) {
       players: playerSeasons.results.map((r) => r.season),
     },
     teams: teams.results.map((r) => r.team_abbr),
+    team_names,
     player_count: playerRows.results.length,
     players,
   };
@@ -684,7 +688,7 @@ async function getGameDetail(DB, gameId) {
     .first();
   if (!game) return null;
 
-  const [model, homeToDate, awayToDate, homeFull, awayFull, h2h] = await Promise.all([
+  const [model, homeToDate, awayToDate, homeFull, awayFull, h2h, teamNames] = await Promise.all([
     DB.prepare(
       `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total, updated, note
        FROM model WHERE game_id = ?`
@@ -707,13 +711,20 @@ async function getGameDetail(DB, gameId) {
     )
       .bind(gameId, game.home_team, game.away_team, game.away_team, game.home_team)
       .all(),
+    DB.prepare("SELECT team_abbr, team_name FROM team WHERE team_abbr IN (?, ?)")
+      .bind(game.home_team, game.away_team)
+      .all(),
   ]);
+
+  const team_names = {};
+  for (const row of teamNames.results) team_names[row.team_abbr] = row.team_name;
 
   return {
     game,
     model: model ? { ...model, flagged: !!model.flagged } : null,
     home: { team: game.home_team, season_to_date: homeToDate, full_season: homeFull },
     away: { team: game.away_team, season_to_date: awayToDate, full_season: awayFull },
+    team_names,
     head_to_head: h2h.results,
     updated: new Date().toISOString(),
   };
