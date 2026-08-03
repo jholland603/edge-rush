@@ -9,7 +9,6 @@ const NAV_LINKS = [
   { key: "home", label: "Home", href: "index.html" },
   { key: "teams", label: "Teams", href: "teams.html" },
   { key: "players", label: "Players", href: "players.html" },
-  { key: "compare", label: "Compare", href: "compare.html" },
   { key: "games", label: "Games", href: "games.html" },
   { key: "picks", label: "Model Picks", href: "picks.html" },
   { key: "trends", label: "Trends", href: "trends.html" },
@@ -46,7 +45,6 @@ class SiteFooter extends HTMLElement {
           <a href="games.html">Games</a>
           <a href="teams.html">Teams</a>
           <a href="players.html">Players</a>
-          <a href="compare.html">Compare</a>
           <a href="trends.html">Trends</a>
         </div>
       </div>
