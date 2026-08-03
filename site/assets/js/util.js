@@ -55,6 +55,39 @@ const Util = {
     return `${Util.escapeHtml(team)} ${(-Math.abs(n)).toFixed(decimals)}`;
   },
 
+  /**
+   * Stadiums with a retractable roof -- `game.roof` is null for these until
+   * the game-time decision is made (usually not known far in advance), so
+   * a null roof there means "TBD," not missing data. Every other stadium's
+   * roof type is fixed and known even for future games.
+   */
+  RETRACTABLE_STADIUMS: new Set(["ATL97", "DAL00", "HOU00", "IND00", "PHO00"]),
+
+  /** Human label for a game's roof/venue type, e.g. "Dome", "Outdoors", "Retractable (TBD)" */
+  roofLabel(roof, stadiumId) {
+    switch (roof) {
+      case "dome":
+        return "Dome";
+      case "outdoors":
+        return "Outdoors";
+      case "closed":
+        return "Retractable (closed)";
+      case "open":
+        return "Retractable (open)";
+      default:
+        return Util.RETRACTABLE_STADIUMS.has(stadiumId) ? "Retractable (TBD)" : "-";
+    }
+  },
+
+  /** Short forecast summary, e.g. "72°F, 8mph, 20% rain" -- "-" if no forecast on file */
+  forecastLabel(g) {
+    if (g.forecast_temp === null || g.forecast_temp === undefined) return "-";
+    const parts = [`${Math.round(g.forecast_temp)}°F`];
+    if (g.forecast_wind !== null && g.forecast_wind !== undefined) parts.push(`${Math.round(g.forecast_wind)}mph`);
+    if (g.forecast_precip_prob !== null && g.forecast_precip_prob !== undefined) parts.push(`${Math.round(g.forecast_precip_prob)}% rain`);
+    return parts.join(", ");
+  },
+
   formatDate(dateStr) {
     if (!dateStr) return "-";
     const d = new Date(`${dateStr}T00:00:00`);

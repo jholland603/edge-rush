@@ -197,15 +197,17 @@ async function getIndex(DB) {
 async function getGamesSeason(DB, season) {
   const { results } = await DB.prepare(
     `
-    SELECT game_id, season, week, game_type_code AS game_type, gameday, weekday, gametime,
-           home_team, away_team, home_score, away_score, result, total, overtime,
-           home_rest, away_rest, div_game, roof, surface, temp, wind,
-           home_qb_id, away_qb_id, stadium_id,
-           spread_line, home_spread_odds, away_spread_odds, total_line,
-           over_odds, under_odds, home_moneyline, away_moneyline
-    FROM game
-    WHERE season = ?
-    ORDER BY week, game_id
+    SELECT g.game_id, g.season, g.week, g.game_type_code AS game_type, g.gameday, g.weekday, g.gametime,
+           g.home_team, g.away_team, g.home_score, g.away_score, g.result, g.total, g.overtime,
+           g.home_rest, g.away_rest, g.div_game, g.roof, g.surface, g.temp, g.wind,
+           g.home_qb_id, g.away_qb_id, g.stadium_id,
+           g.spread_line, g.home_spread_odds, g.away_spread_odds, g.total_line,
+           g.over_odds, g.under_odds, g.home_moneyline, g.away_moneyline,
+           wf.forecast_temp, wf.forecast_wind, wf.forecast_precip_prob, wf.fetched_at AS forecast_fetched_at
+    FROM game g
+    LEFT JOIN weather_forecast wf ON wf.game_id = g.game_id
+    WHERE g.season = ?
+    ORDER BY g.week, g.game_id
     `
   )
     .bind(season)
@@ -682,13 +684,16 @@ async function getTeamAggregate(DB, team, season, beforeWeek) {
 async function getGameDetail(DB, gameId) {
   const game = await DB.prepare(
     `
-    SELECT game_id, season, week, game_type_code AS game_type, gameday, weekday, gametime,
-           home_team, away_team, home_score, away_score, result, total, overtime,
-           home_rest, away_rest, div_game, roof, surface, temp, wind,
-           home_qb_id, away_qb_id, stadium_id,
-           spread_line, home_spread_odds, away_spread_odds, total_line,
-           over_odds, under_odds, home_moneyline, away_moneyline
-    FROM game WHERE game_id = ?
+    SELECT g.game_id, g.season, g.week, g.game_type_code AS game_type, g.gameday, g.weekday, g.gametime,
+           g.home_team, g.away_team, g.home_score, g.away_score, g.result, g.total, g.overtime,
+           g.home_rest, g.away_rest, g.div_game, g.roof, g.surface, g.temp, g.wind,
+           g.home_qb_id, g.away_qb_id, g.stadium_id,
+           g.spread_line, g.home_spread_odds, g.away_spread_odds, g.total_line,
+           g.over_odds, g.under_odds, g.home_moneyline, g.away_moneyline,
+           wf.forecast_temp, wf.forecast_wind, wf.forecast_precip_prob, wf.fetched_at AS forecast_fetched_at
+    FROM game g
+    LEFT JOIN weather_forecast wf ON wf.game_id = g.game_id
+    WHERE g.game_id = ?
     `
   )
     .bind(gameId)

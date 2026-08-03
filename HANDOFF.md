@@ -704,3 +704,126 @@ shows full names instead of abbreviations, same reasoning.
 - Direct D1 queries via the MCP tool are instant and a great debugging tool —
   don't hesitate to test a suspect INSERT statement directly there before
   assuming a bug is in the generation script.
+
+## Stadium name fix, roof/dome indicator, and weather forecast scaffolding
+
+- Fixed 18 stale rows in the `stadium` dimension table (e.g. `PSINet Stadium`
+  → `M&T Bank Stadium`, `Heinz Field` → `Acrisure Stadium`) so `stadium_name`
+  reflects nflverse's own current naming per its 2025-season `raw/games.csv`
+  rows. Deliberately did NOT try to reconstruct era-correct historical names
+  per game (e.g. showing "PSINet Stadium" for 1999 Ravens games) — that data
+  exists in `raw/games.csv`'s trailing `stadium` column but reconstructing
+  ~7,500 rows' worth of rename-transition dates needs bulk CSV processing
+  (pandas), which the bash sandbox couldn't do this session. Jeff said he
+  didn't think it mattered much anyway, so this was dropped in favor of a
+  roof/dome indicator instead (see below).
+  - One caveat worth remembering: nflverse's own schedule data can lag real
+    -world sponsor renames — its 2025 rows still say "New Era Field" for
+    Buffalo, not "Highmark Stadium." We load whatever nflverse's data says
+    (project's stated source of truth), not our own outside knowledge of the
+    "actual" current name.
+- Added `stadium.latitude` / `stadium.longitude` (REAL columns), populated
+  for all 30 stadium_ids used by the 2026 schedule. Values are well-known,
+  stable geographic facts (not sourced per-row from nflverse), good enough
+  precision for a weather API call.
+- Added `Util.roofLabel(roof, stadiumId)` in `util.js`: turns `game.roof`
+  ("dome"/"outdoors"/"closed"/"open"/null) into a friendly label. The 5
+  retractable-roof stadiums (`ATL97`, `DAL00`, `HOU00`, `IND00`, `PHO00`)
+  legitimately have `roof = NULL` for future games until the game-day
+  decision is made — `roofLabel` shows "Retractable (TBD)" for those instead
+  of treating it as missing data. Wired into a new "Roof" column on
+  `games.html` and into the "Conditions" card on `game.html`.
+- **Weather forecast pipeline (Task #26 infra done, no data yet — see
+  below):**
+  - New table `weather_forecast (game_id PK, forecast_temp, forecast_wind,
+    forecast_precip_prob, fetched_at, source)`. One row per game, overwritten
+    in place as forecasts get refreshed (unlike `picks_log`, there's no
+    "frozen prediction to grade" concept here — once `game.temp`/`game.wind`
+    exist post-game, the forecast is just superseded, not compared against).
+  - Worker: `getGamesSeason` and `getGameDetail` now `LEFT JOIN
+    weather_forecast` and return `forecast_temp` / `forecast_wind` /
+    `forecast_precip_prob` / `forecast_fetched_at` alongside the game row. No
+    new routes needed. **Worker needs redeploying** for this to take effect.
+  - Site: `Util.forecastLabel(g)` renders e.g. "72°F, 8mph, 20% rain"; shown
+    in a new "Forecast" column on `games.html` and folded into game.html's
+    Conditions card (only shown once `game.temp` is null, i.e. pre-game).
+  - Data source: Open-Meteo (`api.open-meteo.com/v1/forecast`), free, no API
+    key. **Note:** plain `mcp__workspace__web_fetch` returns empty output for
+    this JSON API in this environment (also failed on the nflverse
+    draft_picks CSV download — seems to be a non-HTML-content issue with
+    that tool here) — use the Claude-in-Chrome browser tools
+    (`navigate` + `get_page_text`) instead, confirmed working.
+  - A daily scheduled task, `nfl-weather-forecast-refresh` (8:06am local,
+    self-contained prompt in `C:\Users\jeffr\Claude\Scheduled\
+    nfl-weather-forecast-refresh\SKILL.md`), checks for REG games in the
+    next 14 days at non-dome stadiums lacking a fresh forecast and
+    upserts one via Open-Meteo. Most days it'll no-op — forecasts are only
+    meaningful ~10-16 days out, and as of 2026-08-03 the earliest 2026 game
+    is 2026-09-09 (no PRE-season games loaded in D1 for 2026), so this task
+    won't actually populate anything until roughly the last week of August.
+    That's expected, not a bug.
+
+## Coaching tenure — preliminary sniff test, NOT yet a model feature (Task #27)
+
+- Added a D1 view `coach_tenure(game_id, team, coach_id,
+  tenure_games_before)` — for every team-game, how many prior games that
+  exact coach has coached that exact team (0 = first game with the team).
+  Computed with a SQL window function (`ROW_NUMBER() OVER (PARTITION BY
+  team, coach_id ORDER BY season, week)`), works for future 2026 games too
+  since `home_coach_id`/`away_coach_id` are already populated.
+- Ran a quick, honest sniff test bucketing REG-season games by
+  (home coach tenure − away coach tenure) and comparing average RAW home
+  scoring margin vs. average margin AGAINST THE CLOSING SPREAD (ATS):
+  raw margin trends cleanly with tenure gap (-0.88 → +5.21 pts across the 5
+  buckets from "away much more tenured" to "home much more tenured"), but
+  the ATS margin does NOT show a clean trend (-0.50, +0.54, -0.41, +0.14,
+  +0.47) — i.e. the market already seems to price in what tenure is a proxy
+  for, so a coach's own tenure may not add much edge-finding power on top of
+  the market line, at least not as a lone univariate signal.
+- This is NOT a substitute for the real Phase 1 backtest methodology
+  (walk-forward regression refit with the feature added, checking
+  calibration/hit-rate) — that requires running `scripts/backtest_v3.py` or
+  similar, which needs the bash sandbox (down all session) for numpy/pandas.
+  Do not wire `tenure_games_before` into `weekly_update.py`'s live
+  predictions without running that backtest first; the sniff test above is
+  a reason for lowered enthusiasm, not a final verdict (a multivariate
+  regression could still find something the naive bucket split misses).
+
+## Draft capital feature — still blocked (Task #28)
+
+- Confirmed the correct source URL:
+  `https://github.com/nflverse/nflverse-data/releases/download/draft_picks/draft_picks.csv`
+  (also available as `.rds`/`.parquet`, same path pattern). This is a real,
+  working release asset — the earlier failed guesses were wrong paths, this
+  one is right per `nflreadr`'s own source (`R/load_draft_picks.R`).
+- Still can't ingest it in this environment: `mcp__workspace__web_fetch`
+  returns empty on the direct download link, and navigating to it in Chrome
+  triggers a browser file *download* rather than rendering the CSV as text
+  (unlike a plain JSON API, which Chrome renders fine) — so there's no way
+  to read the bytes without the bash sandbox (which was down the entire
+  session) to `curl`/`pandas.read_csv` it directly. Next session: check bash
+  first: if it's up, `curl -L <url> -o draft_picks.csv` should just work.
+- Update: Jeff manually downloaded it to `raw/draft_picks.csv` (readable as
+  plain text — 12,927 picks, 1980-2025, 35 columns). Bash was still down, so
+  a full pick-value-weighted, multi-year aggregation (proper job for
+  pandas) wasn't feasible by hand. Built a coarse stopgap instead: table
+  `draft_capital_recent(team, picks_rounds123_2022_2025)` — count of each
+  team's round 1-3 picks over the last 4 drafts, gathered via 32 targeted
+  `Grep -c` calls directly against the CSV (reliable exact counts, not
+  hand-transcribed — verified the 32 counts sum to 409, matching the
+  expected ~102 picks/round1-3 x 4 years). Sniff-tested against 2025 REG
+  season ATS margin, bucketed by (home capital − away capital): showed NO
+  usable trend (0.27, -0.21, 0.55, 2.03, -1.23 across the 5 buckets, not
+  monotonic) — but this is inconclusive, not a negative result: one season
+  (~272 games) is too small a sample and pick-count is a much cruder proxy
+  than a real pick-value curve. Contrast with the coaching-tenure sniff test
+  above, which had ~27 seasons of data and showed a real pattern either way.
+  **Don't read anything into this result** — it just means the coarse
+  version isn't informative, not that draft capital doesn't matter. Redo
+  properly once bash is back: load the full `raw/draft_picks.csv` into a
+  `draft_pick(season, round, pick, team)` table (team abbreviation mapping
+  needed: GNB→GB, KAN→KC, NOR→NO, SFO→SF, TAM→TB, SDG→SD, NWE→NE, LAR→LA,
+  LVR→LV, OAK stays OAK), apply a real pick-value curve (e.g. `3000/pick` or
+  a proper draft trade chart), sum a trailing-N-year window per team per
+  season, and backtest across many seasons the way the coaching-tenure
+  bucket test did.

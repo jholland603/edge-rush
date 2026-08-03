@@ -36,10 +36,17 @@
     subtitleEl.textContent = `${g.season} · Week ${g.week} · ${g.game_type} · ${Util.formatDate(g.gameday)}`;
 
     const weather = [];
-    if (g.roof) weather.push(Util.escapeHtml(g.roof));
+    const roofLabel = Util.roofLabel(g.roof, g.stadium_id);
+    if (roofLabel !== "-") weather.push(Util.escapeHtml(roofLabel));
     if (g.surface) weather.push(Util.escapeHtml(g.surface));
-    if (g.temp !== null && g.temp !== undefined) weather.push(`${g.temp}°F`);
-    if (g.wind !== null && g.wind !== undefined) weather.push(`${g.wind} mph wind`);
+    if (g.temp !== null && g.temp !== undefined) {
+      // Actual post-game weather takes priority once it exists.
+      weather.push(`${g.temp}°F`);
+      if (g.wind !== null && g.wind !== undefined) weather.push(`${g.wind} mph wind`);
+    } else {
+      const forecast = Util.forecastLabel(g);
+      if (forecast !== "-") weather.push(`forecast: ${Util.escapeHtml(forecast)}`);
+    }
 
     summaryWrap.innerHTML = `
       <div class="card-grid">

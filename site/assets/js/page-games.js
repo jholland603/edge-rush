@@ -105,6 +105,8 @@
             <td>${atsBadge(g)}</td>
             <td>${ouBadge(g)}</td>
             <td>${edgeBadge(g)}</td>
+            <td>${Util.escapeHtml(Util.roofLabel(g.roof, g.stadium_id))}</td>
+            <td>${Util.escapeHtml(Util.forecastLabel(g))}</td>
           </tr>
         `;
       })
@@ -116,7 +118,7 @@
           <tr>
             <th>Wk</th><th>Type</th><th>Date</th><th>Matchup</th>
             <th class="num">Score (Away&ndash;Home)</th><th class="num">Line</th><th class="num">Total</th>
-            <th>ATS</th><th>O/U</th><th class="num">Model Edge</th>
+            <th>ATS</th><th>O/U</th><th class="num">Model Edge</th><th>Roof</th><th>Forecast</th>
           </tr>
         </thead>
         <tbody>${bodyRows}</tbody>
