@@ -78,25 +78,15 @@ dimension; see those bugs below for exact counts. `team_game`/`player_game`
 will each land 1 below their listed totals — one null-team row each, see bug
 #4.)
 
-As of the last check this session: `game=7548` (done), `player=11366` (done),
-`team_game=14530` (done, 1 short of 14531 as expected, see bug #4),
-`player_game=475564` (done), `player_game_offense`/`defense`/`special_teams`/
-`misc` all at `475564` (done and content-verified, both the 2010-2025 reload
-after bug #7's cleanup and the pre-existing 1999-2009 data), `injury_report=0`
-(not loaded yet — regenerated with bug #8's fix, ready to load, expect 90,346
-once done). **Eight bugs found and fixed so far** (semicolons, file-ordering,
-JAC/JAX, null-team orphan rows, placeholder player_ids in player_game,
-unquoted inf, a serious silent id-shift corruption across 16 seasons of
-category data, and the same placeholder-player_id issue in injury_report —
-all detailed below, bug #7 especially worth reading before touching this data
-again). `d1/import.ps1` has a persistent skip-log (`d1/imported.log`) so
-re-runs don't re-upload already-loaded files. **Next action: tell the user to
-run `.\import.ps1` again** — it'll resume at `30_injury_2009.sql` (everything
-before that is already logged as done) and should run all the way through
-this time. If it hits yet another error, ask the user to paste it and
-diagnose with the method below — and given bug #7, don't assume a clean exit
-code means the data is actually correct; spot-check content occasionally, not
-just row counts.
+**Update: the full historical import finished and was verified in a later
+session** — `game=7548`, `player=11366`, `team_game=14530`, `player_game=475564`
+(all four `player_game_*` category tables content-verified, not just row
+counts), `injury_report=90346`. All 8 bugs below are fixed and the fixes are
+confirmed live. `d1/sql/` (the generated files) and the old static
+`data/*.json` tree have since been deleted — both are safe to regenerate/were
+superseded (see the D1-migration sections further down for what replaced
+them). The rest of this "Data load status" section and the 8 bugs below are
+kept as project history / diagnostic reference, not a live to-do list.
 
 ### How the load works, and two bugs already found and fixed
 
@@ -390,19 +380,17 @@ row counts up top). The two open design decisions got answered this session:
   selected range come back `null` from the API and are dropped from that
   render with a small warning badge rather than crashing.
 
-**Next action — tell the user to deploy the Worker:**
-```powershell
-cd C:\Users\jeffr\Documents\edge-rush\worker
-wrangler deploy
-```
-Then paste the printed `https://edge-rush-api.<subdomain>.workers.dev` URL
-into the `API_BASE` constant near the top of `site/assets/js/data.js`
-(currently `https://edge-rush-api.YOUR-SUBDOMAIN.workers.dev`), commit/push
-for GitHub Pages, and spot-check `games.html`/`teams.html`/`players.html`/
-`compare.html` load correctly. `worker/README.md` has a few sanity-check URLs
-to hit directly first. If any page errors, check the browser console for a
-CORS or 404 error first — likely just `API_BASE` not updated yet, or a route
-typo.
+**Update: the Worker is deployed** at `https://edge-rush-api.disttrkr.workers.dev`
+(already the real URL in `site/assets/js/data.js`'s `API_BASE`, not a
+placeholder). One bug hit and fixed post-deploy: `/teams/:season` and
+`/players/season/:season` initially 500'd with `"too many columns in result
+set"` — the original single wildcard 4-way join (`o.*, d.*, s.*, m.*`, 133+
+columns) blew past a D1 result-set column limit. Fixed by splitting into 5
+narrower `Promise.all`'d queries merged in JS by id (see the code comments in
+`getTeamsSeason`/`getPlayersSeason` in `worker/src/index.js`) — redeploy with
+`wrangler deploy` after pulling this fix if you haven't already. Whenever the
+Worker's code changes (including the Phase-2/3 routes added later, see
+below), redeploy the same way — the URL doesn't change between deploys.
 
 **Field-fidelity note:** the Worker's JSON shapes closely match the old
 static files but aren't a byte-perfect reproduction of every field
@@ -417,6 +405,209 @@ CSV-row-order groupby, which is nearly always the same result but isn't
 guaranteed identical in rare tie-break edge cases. If a stat card ever looks
 wrong on a real player, compare the Worker's SQL for that field against the
 raw CSV before assuming it's a bug in the data itself.
+
+**Old static JSON tree (`data/games`, `data/teams`, `data/players`, top-level
+`index.json`) has been deleted** — everything now comes from D1/the Worker.
+`raw/` (source CSVs) was deliberately kept: 7 scripts still read it directly
+(`build_d1_sql.py`, `build_incremental_sql.py`, `weekly_update.py`,
+`reconcile_picks.py`, `backtest_v2.py`, and others). `d1/sql/*.sql` (the
+one-time historical bulk-load files) is safe to delete too if disk space
+matters — fully regenerable from `raw/*.csv` via `build_d1_sql.py`.
+
+## Phase 2/3 (model + picks log) also migrated into D1 — the site is now 100% D1-backed
+
+Everything above (games/teams/players/compare) was the first D1 migration.
+This session finished the rest: `model` predictions and the `picks_log` are
+now D1 tables too, and — the part the user actually asked for — there's a
+weekly scheduled task that keeps all of this current automatically, so
+nobody has to manually re-run the historical import or hand-feed CSVs again.
+
+### New D1 tables
+
+```sql
+CREATE TABLE model (
+  model_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  season INTEGER NOT NULL REFERENCES season(season_year), week INTEGER NOT NULL,
+  game_id TEXT NOT NULL UNIQUE REFERENCES game(game_id), matchup TEXT NOT NULL,
+  market_spread REAL, model_spread REAL, edge REAL, p_home_covers REAL,
+  flagged INTEGER NOT NULL DEFAULT 0, market_total REAL, updated TEXT NOT NULL, note TEXT
+);
+CREATE TABLE picks_log (
+  picks_log_id INTEGER PRIMARY KEY AUTOINCREMENT, logged_at TEXT NOT NULL,
+  season INTEGER NOT NULL REFERENCES season(season_year), week INTEGER NOT NULL,
+  game_id TEXT NOT NULL UNIQUE REFERENCES game(game_id), gameday TEXT,
+  home_team TEXT NOT NULL REFERENCES team(team_abbr), away_team TEXT NOT NULL REFERENCES team(team_abbr),
+  market_spread REAL, model_spread REAL, edge REAL, p_home_covers REAL,
+  bet_placed TEXT NOT NULL DEFAULT 'N', closing_line REAL, actual_result REAL, clv REAL,
+  side TEXT, covered INTEGER
+);
+```
+
+Design notes:
+- `model.game_id` is `UNIQUE` and rows are **upserted** (`ON CONFLICT DO
+  UPDATE`) — unlike picks_log, a prediction isn't "frozen," so re-running
+  `weekly_update.py` before kickoff (e.g. as injury news changes through the
+  week) intentionally overwrites that game's prior prediction in place.
+- `picks_log.game_id` is also `UNIQUE`, but inserts are `INSERT OR IGNORE` —
+  once a game is flagged and logged, `weekly_update.py` never touches that
+  row again. `reconcile_picks.py` is the only thing allowed to update a
+  logged row, and it only ever fills `closing_line`/`actual_result`/`clv`/
+  `side`/`covered` — `logged_at`/`market_spread`/`model_spread`/`edge` stay
+  frozen forever. This is the whole point of a pick log (see
+  `nfl-handicapping-project-instructions.md` Phase 3).
+- Existing `data/model/*.json` + `data/log/picks_log.json` (4 weeks of 2026
+  predictions, 32 logged picks) were migrated in directly via the D1 MCP
+  tool and verified row-count-identical (51 model rows across weeks 1-4, 32
+  picks_log rows) before the static files were removed.
+
+### Worker + site changes
+
+`worker/src/index.js` gained three routes: `/model/manifest` (replaces
+`data/model/manifest.json`), `/model/:season/:week` (replaces
+`data/model/{season}-week{week}.json`), `/picks` (replaces
+`data/log/picks_log.json`). `site/assets/js/data.js`'s `getModelManifest`/
+`getModelWeek`/`getPicksLog` now call the Worker instead of static files —
+`index.html`/`picks.html` (`page-home.js`/`page-picks.js`) needed no changes,
+since the Worker's JSON shapes match the old static files field-for-field.
+**The whole site is now D1-backed; there is no static `data/` tree left.**
+Remember to `wrangler deploy` from `worker/` after pulling these changes if
+you haven't already (same as the first migration).
+
+### weekly_update.py / reconcile_picks.py: now write to D1, not JSON files
+
+Both scripts still do the exact same modeling/reconciliation logic as
+before (EWMA power ratings, `np.linalg.lstsq` margin fit, CLV math) — only
+the *persistence* layer changed:
+- `weekly_update.py` now upserts every scored game into `model` and
+  `INSERT OR IGNORE`s newly-flagged games into `picks_log`, instead of
+  writing `data/model/*.json` + `backtest/picks_log.csv`.
+- `reconcile_picks.py` now reads pending `picks_log` rows from D1 and writes
+  `UPDATE`s back, instead of reading/writing `backtest/picks_log.csv`.
+- **`backtest/picks_log.csv` is no longer written or read by either script.**
+  D1 is now the single source of truth for picks. (`backtest/predictions_v2.csv`
+  from Phase 1's backtest is unrelated and still used as-is, for calibration.)
+
+Both scripts talk to D1 via `wrangler d1 execute --remote` by default (same
+as the original bulk import — needs `wrangler login` already done), e.g.:
+```powershell
+cd C:\Users\jeffr\Documents\edge-rush
+python scripts/weekly_update.py --season 2026
+python scripts/reconcile_picks.py
+```
+Both also accept a `--sql-out PATH` flag that writes the generated SQL to a
+file *instead of* running wrangler — this exists because the Cowork
+scheduled task below runs in an environment with no wrangler/local login,
+only the D1 MCP connector, so it needs to generate SQL and apply it itself
+via that tool. `reconcile_picks.py` additionally accepts `--pending-json
+PATH` (read the list of un-reconciled picks from a file instead of querying
+D1 via wrangler) for the same reason. Don't need either flag for a normal
+manual run.
+
+### New script: `scripts/build_incremental_sql.py` (loads one season's new/changed raw rows)
+
+`build_d1_sql.py` was a **one-time** historical bulk-load tool — it assigns
+`team_game_id`/`player_game_id` by replaying the *entire* row sequence from
+scratch (see bug #7 above for how fragile that turned out to be). It is
+**not** safe to use for ongoing weekly loads.
+
+`build_incremental_sql.py` is the ongoing-load equivalent, safe to run
+repeatedly, any time, for a single season, without knowing what's already
+loaded:
+- `game` rows are upserted every time (scores/lines/weather settle in as
+  the week plays out).
+- `coach`/`referee` are looked up by name via a SQL subquery
+  (`(SELECT coach_id FROM coach WHERE name = ...)`) rather than a
+  precomputed id — new coaches/refs just get `INSERT OR IGNORE`'d first.
+- `team_game`/`player_game` hub rows are `INSERT OR IGNORE`'d letting
+  `INTEGER PRIMARY KEY AUTOINCREMENT` assign the id (confirmed these columns
+  really are `AUTOINCREMENT` in the live schema, unlike what the manual
+  bulk-load counters assumed they'd need). The category tables are loaded
+  right after with `INSERT OR REPLACE INTO ... SELECT tg.team_game_id, ...
+  FROM team_game tg WHERE tg.game_id = ? AND tg.team = ?` — looking the
+  freshly-assigned id up by its natural key in the same statement, so there's
+  no separate round-trip needed to read back what id got assigned.
+- `player` dimension rows for anyone new (rookies, etc.) are derived
+  directly from the current season's `stats_player_week`/`injuries` CSVs
+  (their own name columns), **not** from the old `index.json` (deleted, see
+  above) — this was a real gap that had to be solved for this to work going
+  forward.
+- `injury_report` has no natural unique key (a player can have several daily
+  practice-report snapshots in one week), so each insert is guarded with
+  `WHERE NOT EXISTS` an identical row already, instead of relying on a
+  constraint.
+
+Same `--sql-out` pattern as the other two scripts.
+
+### The actual automation: Cowork scheduled task `edge-rush-weekly-refresh`
+
+Set up via `mcp__scheduled-tasks__create_scheduled_task`, runs every Tuesday
+9am, fully self-contained prompt (no memory of this conversation). Each run:
+1. Downloads fresh `raw/games.csv` (all seasons) + current-season
+   `stats_team_week`/`stats_player_week`/`injuries` CSVs from nflverse.
+   Treats a 404/not-yet-published file as expected, not an error (important
+   off-season and early in a week before nflverse publishes that week's
+   files) — logs it and moves on.
+2. Runs `build_incremental_sql.py --season {N} --sql-out ...`, applies the
+   SQL via the D1 MCP query tool (not wrangler — a background/scheduled run
+   has no local wrangler login).
+3. Runs `weekly_update.py --season {N} --sql-out ...`, applies via MCP.
+4. Queries pending `picks_log` rows via MCP, runs
+   `reconcile_picks.py --pending-json ... --sql-out ...`, applies via MCP.
+5. Reports a short summary (rows loaded, predictions upserted, picks
+   flagged/reconciled, or "nothing new published yet" if that's what
+   happened).
+
+**Caveat worth knowing:** the `stats_player`/`injuries` nflverse release-tag
+URLs used in the task's prompt (`.../releases/download/stats_player/
+stats_player_week_{season}.csv`, `.../releases/download/injuries/
+injuries_{season}.csv`) follow the same pattern as the `schedules`/
+`stats_team` URLs already confirmed working, but weren't independently
+re-verified this session (the 2026 season hadn't started yet as of this
+writing — no `raw/team/stats_team_week_2026.csv` or
+`raw/player/stats_player_week_2026.csv` exist locally, so there was nothing
+live to test the download against). If a run reports a 404 on either, that's
+the first thing to check — the task's prompt already tells it to fall back
+to browsing `https://github.com/nflverse/nflverse-data/releases` and note
+the mismatch rather than silently failing.
+
+Check/manage this task from the "Scheduled" section of the Cowork sidebar,
+or ask Claude to look it up via `mcp__scheduled-tasks__list_scheduled_tasks`.
+
+## Schedule view + per-game detail page
+
+`games.html` was already effectively a schedule view (every game for a
+season/week, score, closing lines, ATS/O-U result); this added a model-edge
+overlay and a click-through to a new single-game detail page.
+
+- **`GET /model/season/:season`** (new Worker route) -- every `model` row
+  for a season, keyed by `game_id`. `page-games.js` fetches this alongside
+  the game list and adds a "Model Edge" column (badge highlighted if
+  flagged); missing model data for a season/game is normal (not every
+  season has been scored) and just shows `-`. Each matchup cell now links to
+  `game.html?id={game_id}`.
+- **`GET /game/:gameId`** (new Worker route + `game.html`/`page-game.js`) --
+  single-game detail: the game row, its `model` prediction if one exists,
+  each team's stat totals both "to date" (regular-season games earlier in
+  that same season, `game.week < W`) and "full season" (whole season,
+  including postseason if applicable), and up to the last 10 head-to-head
+  meetings between the two franchises (any season, excludes the game itself).
+  Team stat aggregation is a new shared helper, `getTeamAggregate(DB, team,
+  season, beforeWeek)` -- same SUM-over-category-tables pattern as
+  `getPlayerCareer`, just grouped by `team` instead of `player_id`, with an
+  optional `week` cutoff instead of a season range. Verified directly
+  against D1 (not through the deployed Worker -- this sandbox can't reach
+  `workers.dev` URLs, see the network-restriction note further up) using a
+  real game (`2025_05_SF_LA`): to-date/full-season splits and the 10 most
+  recent LA/SF meetings all came back correct.
+- The stat set shown on the game page is a curated subset (passing/rushing
+  yards+TDs+EPA-per-play, turnovers, sacks/INT/TFL on defense, FG/punt
+  special-teams, penalties) -- not the full 47/15/49/15-column category
+  tables. If more detail is wanted later, `getTeamAggregate` is the one
+  place to extend (add columns to whichever category's SUM list) and
+  `STAT_ROWS` in `page-game.js` is the one place to add the matching display
+  row.
+- **Redeploy the Worker** (`wrangler deploy` from `worker/`) to pick up
+  these two new routes -- same as any other `worker/src/index.js` change.
 
 ## Useful file map
 
@@ -441,12 +632,25 @@ raw CSV before assuming it's a bug in the data itself.
   delete/fix already-loaded D1 data, remove the matching line(s) from
   `imported.log` too**, or a re-run will silently skip reloading it.
   `d1/D1_IMPORT_README.md` has more detail, reflects the hub/category split.
-- `worker/` — the new Cloudflare Worker serving games/teams/players/compare
-  from D1 (`src/index.js`, `wrangler.toml`, deploy steps in `README.md`).
-- `site/` — the live static site. `games.html`/`teams.html`/`players.html`/
-  `compare.html` now read from the Worker (once `API_BASE` is set post-deploy);
-  `index.html`/`picks.html` still read `data/*.json` directly (model/picks
-  data, not in D1 — see above).
+- `worker/` — the Cloudflare Worker serving the entire site from D1
+  (`src/index.js`, `wrangler.toml`, deploy steps in `README.md`) — games,
+  teams, players, compare, model, and picks routes all live here now.
+- `site/` — the live static site. Every page (`games.html`/`teams.html`/
+  `players.html`/`compare.html`/`index.html`/`picks.html`/`game.html`) now
+  reads through the Worker (once `API_BASE` is set post-deploy) — there's no
+  static `data/*.json` tree anymore. `game.html`/`page-game.js` is the
+  single-game detail view linked from `games.html`'s schedule table.
+- `scripts/build_d1_sql.py` — the one-time historical bulk-load tool (see
+  above). Don't use this for ongoing weekly loads — see
+  `build_incremental_sql.py` instead.
+- `scripts/build_incremental_sql.py` — ongoing loader: safely adds a single
+  season's new/changed `game`/`team_game`/`player_game`/`injury_report` rows
+  (and any new `player`/`coach`/`referee` dimension rows) without touching
+  historical seasons. What the scheduled task runs weekly.
+- `scripts/weekly_update.py` / `scripts/reconcile_picks.py` — Phase 2/3
+  scripts, now read/write D1's `model`/`picks_log` tables instead of JSON/CSV
+  files. Both support `--sql-out` (and `reconcile_picks.py` also
+  `--pending-json`) so they can run without wrangler, from the scheduled task.
 - `backtest/phase1_results.md` — full model history/results, including the v3
   passer-rating negative finding.
 

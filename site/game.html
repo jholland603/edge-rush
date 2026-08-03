@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFL Model &mdash; Game</title>
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<site-header active="games"></site-header>
+
+<main>
+  <div class="page-header">
+    <p><a href="games.html">&larr; Back to schedule</a></p>
+    <h1 id="game-title">Loading&hellip;</h1>
+    <p id="game-subtitle"></p>
+  </div>
+
+  <div id="game-summary-wrap"></div>
+
+  <div id="model-wrap"></div>
+
+  <h2>Team comparison</h2>
+  <p class="section-intro">"To date" is each team's stats entering this game (regular-season games earlier in the same season only). "Full season" is the complete season total, including games after this one if it's already been played.</p>
+  <div class="table-wrap" id="compare-table-wrap">
+    <div class="loading">Loading&hellip;</div>
+  </div>
+
+  <h2>Head-to-head history</h2>
+  <div class="table-wrap" id="h2h-table-wrap">
+    <div class="loading">Loading&hellip;</div>
+  </div>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/page-game.js"></script>
+</body>
+</html>

@@ -6,6 +6,7 @@
 
   const params = new URLSearchParams(location.search);
   let currentGames = [];
+  let modelByGameId = new Map();
 
   function syncUrl() {
     const p = new URLSearchParams();
@@ -26,13 +27,27 @@
   async function loadSeasonGames() {
     Util.showLoading(tableWrap);
     const season = seasonSelect.value;
-    const data = await Data.getGamesSeason(season);
+    const [data, model] = await Promise.all([
+      Data.getGamesSeason(season),
+      // Model predictions are Phase 2/3 data -- may not exist for every
+      // season (only whatever weeks weekly_update.py has scored). Missing
+      // is normal, not an error, so don't let it break the schedule view.
+      Data.getModelSeason(season).catch(() => []),
+    ]);
     currentGames = data.games;
+    modelByGameId = new Map(model.map((m) => [m.game_id, m]));
 
     const weeks = [...new Set(currentGames.map((g) => g.week))].sort((a, b) => a - b);
     Util.fillSelect(weekSelect, weeks, { placeholder: "All weeks" });
     const wanted = params.get("week");
     weekSelect.value = weeks.map(String).includes(wanted) ? wanted : "";
+  }
+
+  function edgeBadge(g) {
+    const m = modelByGameId.get(g.game_id);
+    if (!m) return `<span class="badge neutral">-</span>`;
+    const cls = m.flagged ? "positive" : "neutral";
+    return `<span class="badge ${cls}">${Util.signed(m.edge, 1)}</span>`;
   }
 
   function atsBadge(g) {
@@ -77,12 +92,13 @@
             <td>${g.week}</td>
             <td>${Util.escapeHtml(g.game_type)}</td>
             <td>${Util.formatDate(g.gameday)}</td>
-            <td>${Util.escapeHtml(g.away_team)} @ ${Util.escapeHtml(g.home_team)}</td>
+            <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(g.away_team)} @ ${Util.escapeHtml(g.home_team)}</a></td>
             <td class="num">${score}</td>
             <td class="num">${Util.signed(g.spread_line, 1)}</td>
             <td class="num">${Util.num(g.total_line, 1)}</td>
             <td>${atsBadge(g)}</td>
             <td>${ouBadge(g)}</td>
+            <td>${edgeBadge(g)}</td>
           </tr>
         `;
       })
@@ -94,7 +110,7 @@
           <tr>
             <th>Wk</th><th>Type</th><th>Date</th><th>Matchup</th>
             <th class="num">Score (Away&ndash;Home)</th><th class="num">Home Line</th><th class="num">Total</th>
-            <th>ATS</th><th>O/U</th>
+            <th>ATS</th><th>O/U</th><th class="num">Model Edge</th>
           </tr>
         </thead>
         <tbody>${bodyRows}</tbody>

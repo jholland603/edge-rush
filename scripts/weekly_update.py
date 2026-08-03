@@ -17,9 +17,14 @@ What it does:
   4. Fits the margin model and the edge-only calibration model on ALL
      completed historical seasons (not walk-forward -- there's no "future"
      left to hide), and scores every upcoming game.
-  5. Writes data/model/{season}-week{N}.json (the site-facing snapshot)
-     and appends flagged games (|edge| >= threshold) to an append-only
-     picks log (backtest/picks_log.csv and a mirrored .json for the site).
+  5. Upserts every scored game into the D1 `model` table (one row per
+     game_id -- re-running this script before kickoff, e.g. as injury
+     news changes, overwrites that game's prediction in place) and
+     inserts newly-flagged games (|edge| >= threshold) into the D1
+     `picks_log` table. picks_log inserts are append-only: once a
+     game_id is logged there, this script never touches it again (that's
+     reconcile_picks.py's job, and even that only fills in the outcome
+     columns).
 
 IMPORTANT: per the Phase 1 calibration test, this model's confidence is
 NOT reliably calibrated (Brier score at or above a naive 50/50 baseline).
@@ -27,10 +32,17 @@ Everything this script produces is for logging/paper-trading only -- see
 --note in the output. Nothing here should be treated as a real pick until
 Phase 1 shows a model that actually clears breakeven with calibrated
 confidence.
+
+D1 access: this script shells out to `wrangler d1 execute --remote`, the
+same CLI already used for the historical import (see d1/import.ps1). You
+must have already run `wrangler login` once; no separate credentials are
+needed.
 """
 
 import argparse
 import json
+import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -50,6 +62,45 @@ DISCLAIMER = (
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --------------------------------------------------------------------------
+# D1 helpers (shell out to wrangler, same auth as the historical import)
+# --------------------------------------------------------------------------
+def sql_str(v):
+    if v is None:
+        return "NULL"
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def sql_num(v):
+    if v is None:
+        return "NULL"
+    if isinstance(v, float) and np.isnan(v):
+        return "NULL"
+    return str(v)
+
+
+def sql_bool(v):
+    return "1" if v else "0"
+
+
+def run_d1_statements(statements, db_name):
+    """Write `statements` to a temp .sql file and apply it with
+    `wrangler d1 execute --remote --file=`. No-op if statements is empty."""
+    if not statements:
+        return
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".sql", delete=False, encoding="utf-8"
+    ) as f:
+        f.write("\n".join(statements))
+        tmp_path = Path(f.name)
+    try:
+        cmd = ["wrangler", "d1", "execute", db_name, "--remote", f"--file={tmp_path}"]
+        print(f"  running: {' '.join(cmd)}  ({len(statements)} statement(s))")
+        subprocess.run(cmd, check=True)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 # --------------------------------------------------------------------------
@@ -263,10 +314,16 @@ def fit_final_edge_calibration(preds_v2_path: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-dir", default="raw", type=Path)
-    parser.add_argument("--data-dir", default="data", type=Path)
     parser.add_argument("--backtest-dir", default="backtest", type=Path)
     parser.add_argument("--predictions-v2", default="backtest/predictions_v2.csv", type=Path)
     parser.add_argument("--season", type=int, required=True)
+    parser.add_argument("--db-name", default="edge-rush",
+                         help="D1 database name (wrangler.toml database_name)")
+    parser.add_argument("--sql-out", type=Path, default=None,
+                         help="Write generated SQL here instead of applying it via "
+                              "`wrangler d1 execute`. Use this when there's no wrangler/"
+                              "local login available (e.g. a Cowork scheduled task) -- "
+                              "apply the file yourself (e.g. via the D1 MCP tool).")
     args = parser.parse_args()
 
     print(f"Loading team-game EPA history (all seasons through what's in raw/)...")
@@ -365,62 +422,64 @@ def main():
     preds = pd.DataFrame(rows)
     print(f"\n{preds['flagged'].sum()} of {len(preds)} games flagged (|edge| >= {EDGE_THRESHOLD})")
 
-    # ---- write per-week site snapshot, one file per (season, week) ----
-    for week, wk in preds.groupby("week"):
-        payload = {
-            "week": int(week), "season": args.season, "updated": now_iso(),
-            "note": DISCLAIMER,
-            "games": [
-                {"matchup": f"{r.away_team} @ {r.home_team}", "market_spread": r.market_spread,
-                 "model_spread": r.model_spread, "edge": r.edge, "p_home_covers": r.p_home_covers,
-                 "flagged": bool(r.flagged), "market_total": r.market_total}
-                for r in wk.itertuples()
-            ],
-        }
-        out_path = args.data_dir / "model" / f"{args.season}-week{int(week)}.json"
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(payload, indent=2, default=str))
-        print(f"  wrote {out_path}")
+    updated_at = now_iso()
 
-    # ---- manifest so the site knows what weeks are available (no directory listing on a static host) ----
-    model_dir = args.data_dir / "model"
-    weeks_available = []
-    for f in sorted(model_dir.glob("*-week*.json")):
-        s, w = f.stem.split("-week")
-        weeks_available.append({"season": int(s), "week": int(w)})
-    weeks_available.sort(key=lambda x: (x["season"], x["week"]))
-    manifest = {"weeks": weeks_available, "latest": weeks_available[-1] if weeks_available else None}
-    (model_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    print(f"  wrote {model_dir / 'manifest.json'}")
+    if args.sql_out:
+        args.sql_out.parent.mkdir(parents=True, exist_ok=True)
+        args.sql_out.write_text("")  # start fresh -- statements below are appended
 
-    # ---- append flagged games to the picks log (idempotent on game_id) ----
-    log_csv = args.backtest_dir / "picks_log.csv"
-    log_csv.parent.mkdir(parents=True, exist_ok=True)
-    flagged = preds[preds["flagged"]].copy()
-    flagged["logged_at"] = now_iso()
-    flagged["bet_placed"] = "N"
-    flagged["closing_line"] = np.nan
-    flagged["actual_result"] = np.nan
-    flagged["clv"] = np.nan
-
-    log_cols = ["logged_at", "season", "week", "game_id", "gameday", "home_team", "away_team",
-                "market_spread", "model_spread", "edge", "p_home_covers",
-                "bet_placed", "closing_line", "actual_result", "clv"]
-
-    if log_csv.exists():
-        existing = pd.read_csv(log_csv)
-        already_logged = set(existing["game_id"])
-        new_rows = flagged[~flagged["game_id"].isin(already_logged)]
-        combined = pd.concat([existing, new_rows[log_cols]], ignore_index=True)
+    # ---- upsert every scored game into D1 `model` (one row per game_id;
+    # re-running before kickoff overwrites that game's prior prediction) ----
+    model_stmts = []
+    for r in preds.itertuples():
+        matchup = f"{r.away_team} @ {r.home_team}"
+        model_stmts.append(
+            "INSERT INTO model (season, week, game_id, matchup, market_spread, model_spread, "
+            "edge, p_home_covers, flagged, market_total, updated, note) VALUES ("
+            f"{r.season}, {r.week}, {sql_str(r.game_id)}, {sql_str(matchup)}, "
+            f"{sql_num(r.market_spread)}, {sql_num(r.model_spread)}, {sql_num(r.edge)}, "
+            f"{sql_num(r.p_home_covers)}, {sql_bool(r.flagged)}, {sql_num(r.market_total)}, "
+            f"{sql_str(updated_at)}, {sql_str(DISCLAIMER)}) "
+            "ON CONFLICT(game_id) DO UPDATE SET "
+            "matchup=excluded.matchup, market_spread=excluded.market_spread, "
+            "model_spread=excluded.model_spread, edge=excluded.edge, "
+            "p_home_covers=excluded.p_home_covers, flagged=excluded.flagged, "
+            "market_total=excluded.market_total, updated=excluded.updated, note=excluded.note;"
+        )
+    print(f"\nUpserting {len(model_stmts)} predictions into D1 `model`...")
+    if args.sql_out:
+        with open(args.sql_out, "a", encoding="utf-8") as f:
+            f.write("\n".join(model_stmts) + "\n")
+        print(f"  wrote statements to {args.sql_out} (not applied -- apply it yourself)")
     else:
-        new_rows = flagged
-        combined = flagged[log_cols]
+        run_d1_statements(model_stmts, args.db_name)
 
-    combined.to_csv(log_csv, index=False)
-    (args.data_dir / "log").mkdir(parents=True, exist_ok=True)
-    combined.to_json(args.data_dir / "log" / "picks_log.json", orient="records", indent=2)
-    print(f"\n{len(new_rows)} new picks logged (log now has {len(combined)} total rows)")
-    print(f"Wrote {log_csv} and data/log/picks_log.json")
+    # ---- insert newly-flagged games into D1 `picks_log` (append-only:
+    # INSERT OR IGNORE means a game_id already logged is never touched here) ----
+    flagged = preds[preds["flagged"]].copy()
+    picks_stmts = []
+    for r in flagged.itertuples():
+        picks_stmts.append(
+            "INSERT OR IGNORE INTO picks_log (logged_at, season, week, game_id, gameday, "
+            "home_team, away_team, market_spread, model_spread, edge, p_home_covers, "
+            "bet_placed, closing_line, actual_result, clv) VALUES ("
+            f"{sql_str(updated_at)}, {r.season}, {r.week}, {sql_str(r.game_id)}, "
+            f"{sql_str(r.gameday)}, {sql_str(r.home_team)}, {sql_str(r.away_team)}, "
+            f"{sql_num(r.market_spread)}, {sql_num(r.model_spread)}, {sql_num(r.edge)}, "
+            f"{sql_num(r.p_home_covers)}, 'N', NULL, NULL, NULL);"
+        )
+    print(f"Inserting up to {len(picks_stmts)} newly-flagged picks into D1 `picks_log` "
+          f"(existing game_ids are silently skipped)...")
+    if args.sql_out:
+        if picks_stmts:
+            with open(args.sql_out, "a", encoding="utf-8") as f:
+                f.write("\n".join(picks_stmts) + "\n")
+        print(f"  wrote statements to {args.sql_out} (not applied -- apply it yourself)")
+    else:
+        run_d1_statements(picks_stmts, args.db_name)
+
+    print(f"\nDone. {len(model_stmts)} predictions upserted, "
+          f"{len(picks_stmts)} flagged picks submitted (new ones inserted, repeats ignored).")
     print(f"\n{DISCLAIMER}")
 
 

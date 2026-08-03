@@ -2,19 +2,16 @@
  * Shared data-access layer. Every page module goes through these functions
  * instead of calling fetch() directly.
  *
- * games/teams/players/compare pages are backed by the edge-rush-api Worker
- * (reads live from D1). model + picks data isn't in D1 yet (Phase 2/3, never
- * migrated -- see HANDOFF.md), so the home and picks pages still read the
- * static data/*.json tree directly, same as before.
+ * Every page (games/teams/players/compare/home/picks) is now backed by the
+ * edge-rush-api Worker, which reads live from D1 -- including model
+ * predictions and the picks log (migrated from static JSON, see HANDOFF.md).
  */
 
 // Set this to your deployed Worker's URL after running `wrangler deploy`
 // from the worker/ directory (wrangler prints it, looks like
 // "https://edge-rush-api.<your-subdomain>.workers.dev"). Until this is set
-// to the real URL, games/teams/players/compare pages will fail to load.
+// to the real URL, every page will fail to load.
 const API_BASE = "https://edge-rush-api.disttrkr.workers.dev";
-
-const DATA_ROOT = "../data"; // still used for model/*.json and the picks log only
 
 const _cache = new Map();
 
@@ -48,13 +45,15 @@ const Data = {
     return fetchJSON(`${API_BASE}/players/career/${encodeURIComponent(playerId)}${q}`);
   },
 
-  // --- still static JSON: no D1 tables for model predictions or the picks
-  // log yet (Phase 2/3 data, out of scope for this migration) ---
-  getModelManifest: () => fetchJSON(`${DATA_ROOT}/model/manifest.json`),
+  getModelManifest: () => fetchJSON(`${API_BASE}/model/manifest`),
 
-  getModelWeek: (season, week) => fetchJSON(`${DATA_ROOT}/model/${season}-week${week}.json`),
+  getModelWeek: (season, week) => fetchJSON(`${API_BASE}/model/${season}/${week}`),
 
-  getPicksLog: () => fetchJSON(`${DATA_ROOT}/log/picks_log.json`),
+  getModelSeason: (season) => fetchJSON(`${API_BASE}/model/season/${season}`),
+
+  getPicksLog: () => fetchJSON(`${API_BASE}/picks`),
+
+  getGameDetail: (gameId) => fetchJSON(`${API_BASE}/game/${encodeURIComponent(gameId)}`),
 };
 
 window.Data = Data;

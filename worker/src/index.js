@@ -13,11 +13,19 @@
  *                                           inclusive season range (the compare-page
  *                                           year-range filter this whole D1 migration
  *                                           was originally for)
+ *   /model/manifest                     -- replaces data/model/manifest.json
+ *   /model/:season/:week                -- replaces data/model/{season}-week{week}.json
+ *   /model/season/:season               -- every model row for a season, keyed by game_id
+ *                                           (used to overlay predicted edge on the schedule page)
+ *   /picks                              -- replaces data/log/picks_log.json
+ *   /game/:gameId                       -- single-game detail: the game row, its model
+ *                                           prediction (if any), each team's season-to-date
+ *                                           (before this game) and full-season stat totals,
+ *                                           and head-to-head history between the two teams
  *
- * The `model/*.json` and `log/picks_log.json` data is NOT covered here -- that's
- * Phase 2/3 (weekly automation, live tracking) data that was never migrated into
- * D1, and index.html / picks.html still read those static files directly. See
- * HANDOFF.md for the reasoning.
+ * model/picks_log are written by scripts/weekly_update.py and
+ * scripts/reconcile_picks.py (both rewired to write D1 directly via
+ * `wrangler d1 execute --remote`, see HANDOFF.md).
  *
  * CORS is wide open (`*`) since this only ever serves public, read-only NFL
  * stats -- no auth, no per-user data, nothing sensitive to restrict access to.
@@ -86,6 +94,27 @@ export default {
         const career = await getPlayerCareer(DB, playerId, from, to);
         if (!career) return notFound(`no data for player ${playerId}`);
         return json(career);
+      }
+
+      if (path === "/model/manifest") {
+        return json(await getModelManifest(DB));
+      }
+      if ((m = path.match(/^\/model\/(\d{4})\/(\d{1,2})$/))) {
+        const week = await getModelWeek(DB, Number(m[1]), Number(m[2]));
+        if (!week) return notFound(`no model data for ${m[1]} week ${m[2]}`);
+        return json(week);
+      }
+      if (path === "/picks") {
+        return json(await getPicksLog(DB));
+      }
+
+      if ((m = path.match(/^\/model\/season\/(\d{4})$/))) {
+        return json(await getModelSeason(DB, Number(m[1])));
+      }
+      if ((m = path.match(/^\/game\/([^/]+)$/))) {
+        const detail = await getGameDetail(DB, decodeURIComponent(m[1]));
+        if (!detail) return notFound(`no game ${m[1]}`);
+        return json(detail);
       }
 
       return notFound();
@@ -483,5 +512,209 @@ async function getPlayerCareer(DB, playerId, from, to) {
     games_played: gamesRow.n,
     updated: new Date().toISOString(),
     career_totals,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// /model/manifest -- distinct (season, week) pairs available in `model`,
+// newest last, mirrors data/model/manifest.json's {weeks, latest} shape.
+// ---------------------------------------------------------------------------
+async function getModelManifest(DB) {
+  const { results } = await DB.prepare(
+    "SELECT DISTINCT season, week FROM model ORDER BY season, week"
+  ).all();
+  const weeks = results.map((r) => ({ season: r.season, week: r.week }));
+  return {
+    weeks,
+    latest: weeks.length ? weeks[weeks.length - 1] : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// /model/:season/:week -- one row per game for that week, mirrors
+// data/model/{season}-week{week}.json's {week, season, updated, note, games}
+// shape. `updated`/`note` are the same for every game in the week (written
+// together by weekly_update.py), so just read them off the first row.
+// ---------------------------------------------------------------------------
+async function getModelWeek(DB, season, week) {
+  const { results } = await DB.prepare(
+    `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged,
+            market_total, updated, note
+     FROM model WHERE season = ? AND week = ? ORDER BY game_id`
+  )
+    .bind(season, week)
+    .all();
+  if (!results.length) return null;
+
+  return {
+    week,
+    season,
+    updated: results[0].updated,
+    note: results[0].note,
+    games: results.map((r) => ({
+      matchup: r.matchup,
+      market_spread: r.market_spread,
+      model_spread: r.model_spread,
+      edge: r.edge,
+      p_home_covers: r.p_home_covers,
+      flagged: !!r.flagged,
+      market_total: r.market_total,
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// /picks -- the full picks log, mirrors data/log/picks_log.json (a flat
+// array of every flagged pick, append-only except for the outcome columns
+// reconcile_picks.py fills in once each game has been played).
+// ---------------------------------------------------------------------------
+async function getPicksLog(DB) {
+  const { results } = await DB.prepare(
+    `SELECT logged_at, season, week, game_id, gameday, home_team, away_team,
+            market_spread, model_spread, edge, p_home_covers, bet_placed,
+            closing_line, actual_result, clv, side, covered
+     FROM picks_log ORDER BY logged_at, game_id`
+  ).all();
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// /model/season/:season -- every model row for a season, keyed by game_id,
+// so the schedule page (games.html) can overlay predicted edge/flagged
+// without fetching week-by-week.
+// ---------------------------------------------------------------------------
+async function getModelSeason(DB, season) {
+  const { results } = await DB.prepare(
+    `SELECT game_id, market_spread, model_spread, edge, p_home_covers, flagged
+     FROM model WHERE season = ?`
+  )
+    .bind(season)
+    .all();
+  return results.map((r) => ({ ...r, flagged: !!r.flagged }));
+}
+
+// ---------------------------------------------------------------------------
+// Shared helper for /game/:gameId -- one team's aggregated offense/defense/
+// special_teams/misc totals for a season, either the whole season
+// (beforeWeek = null) or only games strictly before a given week (used for
+// "season-to-date entering this game"). Same SUM-over-category-tables
+// pattern as getPlayerCareer, just grouped by team instead of player and
+// with an optional week cutoff instead of a season range.
+// ---------------------------------------------------------------------------
+async function getTeamAggregate(DB, team, season, beforeWeek) {
+  const weekClause = beforeWeek != null ? "AND g.week < ?" : "";
+  const args = beforeWeek != null ? [team, season, beforeWeek] : [team, season];
+
+  const [offense, defense, special, misc] = await Promise.all([
+    DB.prepare(
+      `
+      SELECT COUNT(*) games_played,
+             SUM(o.attempts) attempts, SUM(o.completions) completions,
+             SUM(o.passing_yards) passing_yards, SUM(o.passing_tds) passing_tds,
+             SUM(o.passing_interceptions) passing_interceptions, SUM(o.passing_epa) passing_epa,
+             SUM(o.carries) carries, SUM(o.rushing_yards) rushing_yards,
+             SUM(o.rushing_tds) rushing_tds, SUM(o.rushing_epa) rushing_epa,
+             SUM(o.sack_fumbles_lost) sack_fumbles_lost, SUM(o.rushing_fumbles_lost) rushing_fumbles_lost,
+             SUM(o.receiving_fumbles_lost) receiving_fumbles_lost
+      FROM team_game tg JOIN game g ON g.game_id = tg.game_id
+      JOIN team_game_offense o ON o.team_game_id = tg.team_game_id
+      WHERE tg.team = ? AND g.season = ? ${weekClause}
+      `
+    )
+      .bind(...args)
+      .first(),
+    DB.prepare(
+      `
+      SELECT SUM(d.def_sacks) def_sacks, SUM(d.def_interceptions) def_interceptions,
+             SUM(d.def_tackles_for_loss) def_tackles_for_loss, SUM(d.def_qb_hits) def_qb_hits,
+             SUM(d.def_fumbles_forced) def_fumbles_forced, SUM(d.def_tds) def_tds
+      FROM team_game tg JOIN game g ON g.game_id = tg.game_id
+      JOIN team_game_defense d ON d.team_game_id = tg.team_game_id
+      WHERE tg.team = ? AND g.season = ? ${weekClause}
+      `
+    )
+      .bind(...args)
+      .first(),
+    DB.prepare(
+      `
+      SELECT SUM(s.fg_made) fg_made, SUM(s.fg_att) fg_att, SUM(s.pat_made) pat_made, SUM(s.pat_att) pat_att,
+             SUM(s.pt_att) pt_att, SUM(s.pt_net_yards) pt_net_yards
+      FROM team_game tg JOIN game g ON g.game_id = tg.game_id
+      JOIN team_game_special_teams s ON s.team_game_id = tg.team_game_id
+      WHERE tg.team = ? AND g.season = ? ${weekClause}
+      `
+    )
+      .bind(...args)
+      .first(),
+    DB.prepare(
+      `
+      SELECT SUM(m.penalties) penalties, SUM(m.penalty_yards) penalty_yards,
+             SUM(m.fumble_recovery_opp) fumble_recovery_opp, SUM(m.fumbles_lost_total) fumbles_lost_total
+      FROM team_game tg JOIN game g ON g.game_id = tg.game_id
+      JOIN team_game_misc m ON m.team_game_id = tg.team_game_id
+      WHERE tg.team = ? AND g.season = ? ${weekClause}
+      `
+    )
+      .bind(...args)
+      .first(),
+  ]);
+
+  return { ...offense, ...defense, ...special, ...misc };
+}
+
+// ---------------------------------------------------------------------------
+// /game/:gameId -- everything a single-game detail page needs in one call:
+// the game row itself, its model prediction (if this game was ever scored),
+// each team's season-to-date stats entering this game and full-season
+// stats, and up to the last 10 meetings between these two franchises.
+// ---------------------------------------------------------------------------
+async function getGameDetail(DB, gameId) {
+  const game = await DB.prepare(
+    `
+    SELECT game_id, season, week, game_type_code AS game_type, gameday, weekday, gametime,
+           home_team, away_team, home_score, away_score, result, total, overtime,
+           home_rest, away_rest, div_game, roof, surface, temp, wind,
+           home_qb_id, away_qb_id, stadium_id,
+           spread_line, home_spread_odds, away_spread_odds, total_line,
+           over_odds, under_odds, home_moneyline, away_moneyline
+    FROM game WHERE game_id = ?
+    `
+  )
+    .bind(gameId)
+    .first();
+  if (!game) return null;
+
+  const [model, homeToDate, awayToDate, homeFull, awayFull, h2h] = await Promise.all([
+    DB.prepare(
+      `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total, updated, note
+       FROM model WHERE game_id = ?`
+    )
+      .bind(gameId)
+      .first(),
+    getTeamAggregate(DB, game.home_team, game.season, game.week),
+    getTeamAggregate(DB, game.away_team, game.season, game.week),
+    getTeamAggregate(DB, game.home_team, game.season, null),
+    getTeamAggregate(DB, game.away_team, game.season, null),
+    DB.prepare(
+      `
+      SELECT game_id, season, week, gameday, home_team, away_team, home_score, away_score, result, spread_line
+      FROM game
+      WHERE game_id != ? AND result IS NOT NULL
+        AND ((home_team = ? AND away_team = ?) OR (home_team = ? AND away_team = ?))
+      ORDER BY season DESC, week DESC
+      LIMIT 10
+      `
+    )
+      .bind(gameId, game.home_team, game.away_team, game.away_team, game.home_team)
+      .all(),
+  ]);
+
+  return {
+    game,
+    model: model ? { ...model, flagged: !!model.flagged } : null,
+    home: { team: game.home_team, season_to_date: homeToDate, full_season: homeFull },
+    away: { team: game.away_team, season_to_date: awayToDate, full_season: awayFull },
+    head_to_head: h2h.results,
+    updated: new Date().toISOString(),
   };
 }
