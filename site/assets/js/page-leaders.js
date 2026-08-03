@@ -6,11 +6,22 @@
   const positionControl = document.getElementById("position-control");
   const positionToggle = document.getElementById("position-toggle");
   const positionToggleLabel = document.getElementById("position-toggle-label");
+  const careerToggle = document.getElementById("career-toggle");
+  const seasonTypeSelect = document.getElementById("season-type-select");
   const tableWrap = document.getElementById("leaders-table-wrap");
 
   const params = new URLSearchParams(location.search);
   let catalog = { players: [], teams: [] };
   let teamNames = {};
+  let allSeasons = []; // ascending, filled in below once /index loads
+
+  function applyCareerRange() {
+    if (!allSeasons.length) return;
+    fromSelect.value = String(allSeasons[0]);
+    toSelect.value = String(allSeasons[allSeasons.length - 1]);
+    fromSelect.disabled = true;
+    toSelect.disabled = true;
+  }
 
   function currentStatList() {
     return scopeSelect.value === "teams" ? catalog.teams : catalog.players;
@@ -45,6 +56,8 @@
     p.set("stat", statSelect.value);
     p.set("from", fromSelect.value);
     p.set("to", toSelect.value);
+    p.set("season_type", seasonTypeSelect.value);
+    if (careerToggle.checked) p.set("career", "1");
     history.replaceState(null, "", `${location.pathname}?${p.toString()}`);
   }
 
@@ -63,15 +76,16 @@
     }
 
     try {
+      const seasonType = seasonTypeSelect.value;
       let rows, isTeams;
       if (scopeSelect.value === "teams") {
         isTeams = true;
-        const data = await Data.getTeamLeaders({ stat: spec.id, from, to, limit: 32 });
+        const data = await Data.getTeamLeaders({ stat: spec.id, from, to, limit: 32, scope: seasonType });
         rows = data.leaders;
       } else {
         isTeams = false;
         const position = positionControl.style.display !== "none" && positionToggle.checked ? spec.position : null;
-        const data = await Data.getPlayerLeaders({ stat: spec.id, from, to, position, limit: 25 });
+        const data = await Data.getPlayerLeaders({ stat: spec.id, from, to, position, limit: 25, scope: seasonType });
         rows = data.leaders;
       }
 
@@ -138,6 +152,20 @@
     syncUrl();
     render();
   });
+  seasonTypeSelect.addEventListener("change", () => {
+    syncUrl();
+    render();
+  });
+  careerToggle.addEventListener("change", () => {
+    if (careerToggle.checked) {
+      applyCareerRange();
+    } else {
+      fromSelect.disabled = false;
+      toSelect.disabled = false;
+    }
+    syncUrl();
+    render();
+  });
 
   try {
     const [index, leadersCatalog] = await Promise.all([Data.getIndex(), Data.getLeadersCatalog()]);
@@ -145,6 +173,7 @@
     teamNames = index.team_names || {};
 
     const seasons = [...index.seasons.games].sort((a, b) => a - b);
+    allSeasons = seasons;
     const seasonsDesc = [...seasons].sort((a, b) => b - a);
     Util.fillSelect(fromSelect, seasonsDesc);
     Util.fillSelect(toSelect, seasonsDesc);
@@ -157,6 +186,14 @@
     const wantedTo = Number(params.get("to"));
     fromSelect.value = seasons.includes(wantedFrom) ? String(wantedFrom) : String(seasons[0]);
     toSelect.value = seasons.includes(wantedTo) ? String(wantedTo) : String(seasons[seasons.length - 1]);
+
+    if (params.get("career") === "1") {
+      careerToggle.checked = true;
+      applyCareerRange();
+    }
+
+    const wantedSeasonType = params.get("season_type");
+    if (["reg", "post", "all"].includes(wantedSeasonType)) seasonTypeSelect.value = wantedSeasonType;
 
     updatePositionControl();
     render();

@@ -821,6 +821,69 @@ shows full names instead of abbreviations, same reasoning.
   discoverable-but-not-top-level treatment as the Compare page. This was an
   explicit choice from a multiple-choice question, not a default.
 
+## Regular season vs. playoffs: fairness fix across Leaders, Career, and Compare
+
+- The fairness problem: player/team season and career totals were silently
+  mixing in playoff games. That's not an apples-to-apples comparison -- a
+  player whose team goes on a deep playoff run gets more games (and more
+  counting stats) than an equally good player whose team misses the
+  playoffs entirely. Confirmed via a multiple-choice question that this
+  should be fixed everywhere totals get summed and compared: Leaders,
+  the player Career-totals card, and Compare -- not just the newest feature.
+- New shared Worker concept: `scope` = `"reg"` (default, regular season
+  only), `"post"` (playoffs only, `game_type_code != 'REG'`), or `"all"`
+  (both combined). Two helpers, `normalizeScope(raw)` and
+  `scopeClause(scope, alias)`, generate the right `AND {alias}.game_type_code
+  ...` SQL fragment (or none, for "all") -- used by `getPlayerLeaders`,
+  `getTeamLeaders` (including the `points_scored` special case), and
+  `getPlayerCareer`.
+- **`getPlayerCareer` was rewritten** to stop using the `v_player_season_*`
+  views for its offense/defense/special_teams subqueries -- those views
+  pre-aggregate REG+playoffs together with no way to split them back apart,
+  so they couldn't support `scope` at all. Now does the same direct
+  join+SUM against the category tables that `misc` (and `getTeamAggregate`)
+  already did. Verified correctness directly against D1 before shipping:
+  Tom Brady's REG passing yards (89,216) + playoff passing yards (13,400)
+  = 102,616, exactly matching the "all" total. Performance is fine --
+  these are single-player queries (indexed on `player_id`), nothing like
+  the ~1.5s full-history leaderboard scans.
+- All three routes default to `scope=reg` when the param is omitted, so
+  any old cached URL or stale bookmark just gets the fair (regular-season
+  -only) behavior for free.
+- UI: a "Season type" dropdown (Regular season only / Playoffs only /
+  Regular season + playoffs) on `leaders.html`, `compare.html`, and a new
+  one on `players.html` scoped to just the Career-totals card (the weekly
+  log table is unaffected either way -- it already shows individual games
+  with their own round label per row, nothing to "total" unfairly there).
+  `getPlayerCareer` returns `null` when a scope has zero qualifying games
+  (e.g. "Playoffs only" for a player who never made the playoffs) -- all
+  three pages show an empty-state message for that case instead of crashing.
+
+## "Career" option on the Leaders page, and the pre-1999 data wall
+
+- Confirmed via search (not just memory): nflverse's own player-stats
+  pipeline -- what this entire project is built on -- does not go back
+  before 1999, period. No pre-1999 weekly/seasonal player stats exist
+  anywhere in the nflverse ecosystem.
+- `raw/draft_picks.csv` (already downloaded, see the draft-capital section
+  above) does carry PFR-sourced **career totals** (not per-game) for every
+  player drafted since 1980 -- games, completions/attempts, pass yards/TD
+  /INT, rush yards/TD, receptions/rec yards/TD, tackles, INTs, sacks. This
+  was raised as a possible way to approximate pre-1999 career stats (career
+  total minus our known 1999+ total = the missing pre-1999 portion) but
+  explicitly NOT pursued: only covers drafted players since 1980 (misses
+  undrafted players and 1970s-and-earlier careers entirely), no advanced
+  metrics, and loading/reconciling the full ~13k-row file by hand (bash
+  still down) for an approximate result wasn't worth it. Revisit if the
+  sandbox comes back and it seems worth it later -- the file is already in
+  `raw/`.
+- What shipped instead: a "Career (1999&ndash;present)" checkbox on
+  `leaders.html` next to the season selects. Checking it just sets
+  from/to to the full available range and disables the two selects (no new
+  data, no reconciliation) -- clearly labeled "1999-present" so it's never
+  implied to be more complete than it is. `page-leaders.js`:
+  `applyCareerRange()` + a `career=1` URL param to persist/restore it.
+
 ## Player stat picks were curated, not exhaustive -- added QB efficiency stats
 
 - `site/assets/js/player-stats.js` (`CAREER_STAT_GROUPS`, `WEEK_COLUMNS`)

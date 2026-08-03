@@ -51,6 +51,8 @@
     });
   }
 
+  const SEASON_TYPE_LABELS = { reg: "Regular season only", post: "Playoffs only", all: "Regular season + playoffs" };
+
   function renderCareerCard(career) {
     const group = groupFor(career.position);
     const specs = CAREER_STAT_GROUPS[group];
@@ -71,12 +73,8 @@
     }
 
     return `
-      <div class="page-header" style="margin-bottom: var(--space-5);">
-        <h1>${Util.escapeHtml(career.player_display_name)}</h1>
-        <p>${Util.escapeHtml(career.position)} &middot; ${career.teams.join(", ")} &middot; ${career.games_played} games &middot; ${Math.min(...career.seasons)}&ndash;${Math.max(...career.seasons)}
-          &middot; <a href="compare.html?ids=${encodeURIComponent(career.player_id)}">Compare this player &rarr;</a></p>
-      </div>
-      <h2 style="margin-top:0;">Career totals</h2>
+      <p>${Util.escapeHtml(career.position)} &middot; ${career.teams.join(", ")} &middot; ${career.games_played} games &middot; ${Math.min(...career.seasons)}&ndash;${Math.max(...career.seasons)}
+        &middot; <a href="compare.html?ids=${encodeURIComponent(career.player_id)}">Compare this player &rarr;</a></p>
       ${body}
     `;
   }
@@ -89,15 +87,32 @@
 
     let career;
     try {
-      career = await Data.getPlayerCareer(id);
+      career = await Data.getPlayerCareer(id, null, "reg");
     } catch (err) {
       Util.showError(detailEl, err);
+      return;
+    }
+    if (!career) {
+      Util.showEmpty(detailEl, "No regular-season games for this player.");
       return;
     }
 
     const seasons = [...career.seasons].sort((a, b) => b - a);
     detailEl.innerHTML = `
-      ${renderCareerCard(career)}
+      <div class="page-header" style="margin-bottom: var(--space-5);">
+        <h1>${Util.escapeHtml(career.player_display_name)}</h1>
+      </div>
+      <div class="controls">
+        <div class="control">
+          <label for="career-scope-select">Career totals</label>
+          <select id="career-scope-select">
+            <option value="reg">Regular season only</option>
+            <option value="post">Playoffs only</option>
+            <option value="all">Regular season + playoffs</option>
+          </select>
+        </div>
+      </div>
+      <div id="career-card-wrap">${renderCareerCard(career)}</div>
       <h2>Season log</h2>
       <div class="controls">
         <div class="control">
@@ -107,6 +122,22 @@
       </div>
       <div class="table-wrap" id="player-season-table"><div class="loading">Loading&hellip;</div></div>
     `;
+
+    const careerScopeSelect = document.getElementById("career-scope-select");
+    const careerCardWrap = document.getElementById("career-card-wrap");
+    careerScopeSelect.addEventListener("change", async () => {
+      careerCardWrap.innerHTML = `<div class="loading">Loading&hellip;</div>`;
+      try {
+        const scopedCareer = await Data.getPlayerCareer(id, null, careerScopeSelect.value);
+        if (!scopedCareer) {
+          Util.showEmpty(careerCardWrap, `No games for "${SEASON_TYPE_LABELS[careerScopeSelect.value]}" in this player's career.`);
+          return;
+        }
+        careerCardWrap.innerHTML = renderCareerCard(scopedCareer);
+      } catch (err) {
+        Util.showError(careerCardWrap, err);
+      }
+    });
 
     const seasonSelect = document.getElementById("player-season-select");
     Util.fillSelect(seasonSelect, seasons);

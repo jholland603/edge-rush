@@ -37,12 +37,19 @@ const Data = {
 
   // `range` is optional: {from, to} (inclusive season years) restricts the
   // returned career_totals to that window instead of the player's whole
-  // career -- this is the compare-page year-range filter. Cached per
-  // id+range so switching the range doesn't serve a stale full-career
-  // response back.
-  getPlayerCareer: (playerId, range) => {
-    const q = range && range.from && range.to ? `?from=${range.from}&to=${range.to}` : "";
-    return fetchJSON(`${API_BASE}/players/career/${encodeURIComponent(playerId)}${q}`);
+  // career -- this is the compare-page year-range filter. `scope` is
+  // "reg" (default, regular season only), "post" (playoffs only), or "all"
+  // (regular season + playoffs). Cached per id+range+scope so switching
+  // either doesn't serve a stale response back.
+  getPlayerCareer: (playerId, range, scope) => {
+    const p = new URLSearchParams();
+    if (range && range.from && range.to) {
+      p.set("from", range.from);
+      p.set("to", range.to);
+    }
+    if (scope) p.set("scope", scope);
+    const q = p.toString();
+    return fetchJSON(`${API_BASE}/players/career/${encodeURIComponent(playerId)}${q ? `?${q}` : ""}`);
   },
 
   getModelManifest: () => fetchJSON(`${API_BASE}/model/manifest`),
@@ -59,16 +66,18 @@ const Data = {
 
   getLeadersCatalog: () => fetchJSON(`${API_BASE}/leaders/catalog`),
 
-  getPlayerLeaders: ({ stat, from, to, position, limit }) => {
+  getPlayerLeaders: ({ stat, from, to, position, limit, scope }) => {
     const p = new URLSearchParams({ stat, from, to });
     if (position) p.set("position", position);
     if (limit) p.set("limit", limit);
+    if (scope) p.set("scope", scope);
     return fetchJSON(`${API_BASE}/leaders/players?${p.toString()}`);
   },
 
-  getTeamLeaders: ({ stat, from, to, limit }) => {
+  getTeamLeaders: ({ stat, from, to, limit, scope }) => {
     const p = new URLSearchParams({ stat, from, to });
     if (limit) p.set("limit", limit);
+    if (scope) p.set("scope", scope);
     return fetchJSON(`${API_BASE}/leaders/teams?${p.toString()}`);
   },
 };

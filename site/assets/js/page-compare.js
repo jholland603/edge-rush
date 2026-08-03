@@ -5,13 +5,14 @@
   const tableWrap = document.getElementById("compare-table-wrap");
   const yearFromEl = document.getElementById("year-from");
   const yearToEl = document.getElementById("year-to");
+  const seasonTypeEl = document.getElementById("season-type-select");
 
   const { groupFor, CAREER_STAT_GROUPS, statCardValue } = PlayerStats;
   const MAX_PLAYERS = 6;
 
   let playersIndex = null; // { id: {name, position, seasons} }
   let selectedIds = []; // ordered array of player_id, most-recently-added last
-  const careerCache = new Map(); // `${id}:${from}-${to}` -> career json ("full" when no range is set)
+  const careerCache = new Map(); // `${id}:${from}-${to}:${scope}` -> career json ("full" when no range is set)
 
   function currentRange() {
     const from = yearFromEl.value;
@@ -19,8 +20,8 @@
     return from && to ? { from, to } : null;
   }
 
-  function cacheKey(id, range) {
-    return range ? `${id}:${range.from}-${range.to}` : `${id}:full`;
+  function cacheKey(id, range, scope) {
+    return `${id}:${range ? `${range.from}-${range.to}` : "full"}:${scope}`;
   }
 
   function syncUrl() {
@@ -31,6 +32,7 @@
       p.set("from", range.from);
       p.set("to", range.to);
     }
+    p.set("season_type", seasonTypeEl.value);
     history.replaceState(null, "", `${location.pathname}${p.toString() ? "?" + p.toString() : ""}`);
   }
 
@@ -147,13 +149,14 @@
     }
 
     Util.showLoading(tableWrap, "Loading players…");
+    const scope = seasonTypeEl.value;
     let careers;
     try {
       careers = await Promise.all(
         selectedIds.map(async (id) => {
-          const key = cacheKey(id, range);
+          const key = cacheKey(id, range, scope);
           if (!careerCache.has(key)) {
-            careerCache.set(key, await Data.getPlayerCareer(id, range));
+            careerCache.set(key, await Data.getPlayerCareer(id, range, scope));
           }
           return careerCache.get(key);
         })
@@ -239,6 +242,10 @@
     syncUrl();
     render();
   });
+  seasonTypeEl.addEventListener("change", () => {
+    syncUrl();
+    render();
+  });
 
   try {
     const index = await Data.getIndex();
@@ -259,6 +266,9 @@
     const toParam = params.get("to");
     if (fromParam && seasons.map(String).includes(fromParam)) yearFromEl.value = fromParam;
     if (toParam && seasons.map(String).includes(toParam)) yearToEl.value = toParam;
+
+    const seasonTypeParam = params.get("season_type");
+    if (["reg", "post", "all"].includes(seasonTypeParam)) seasonTypeEl.value = seasonTypeParam;
 
     render();
   } catch (err) {

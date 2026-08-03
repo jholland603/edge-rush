@@ -99,7 +99,8 @@ export default {
         const playerId = decodeURIComponent(m[1]);
         const from = url.searchParams.get("from");
         const to = url.searchParams.get("to");
-        const career = await getPlayerCareer(DB, playerId, from, to);
+        const scope = url.searchParams.get("scope");
+        const career = await getPlayerCareer(DB, playerId, from, to, scope);
         if (!career) return notFound(`no data for player ${playerId}`);
         return json(career);
       }
@@ -138,8 +139,9 @@ export default {
         const to = Number(url.searchParams.get("to"));
         const position = url.searchParams.get("position") || null;
         const limit = Math.min(Number(url.searchParams.get("limit")) || 25, 100);
+        const scope = url.searchParams.get("scope");
         if (!statId || !from || !to) return json({ error: "stat, from, and to are required" }, 400);
-        const result = await getPlayerLeaders(DB, statId, from, to, position, limit);
+        const result = await getPlayerLeaders(DB, statId, from, to, position, limit, scope);
         if (result === null) return notFound(`unknown stat ${statId}`);
         return json(result);
       }
@@ -148,8 +150,9 @@ export default {
         const from = Number(url.searchParams.get("from"));
         const to = Number(url.searchParams.get("to"));
         const limit = Math.min(Number(url.searchParams.get("limit")) || 25, 32);
+        const scope = url.searchParams.get("scope");
         if (!statId || !from || !to) return json({ error: "stat, from, and to are required" }, 400);
-        const result = await getTeamLeaders(DB, statId, from, to, limit);
+        const result = await getTeamLeaders(DB, statId, from, to, limit, scope);
         if (result === null) return notFound(`unknown stat ${statId}`);
         return json(result);
       }
@@ -431,17 +434,21 @@ async function getPlayersSeason(DB, season) {
 }
 
 // ---------------------------------------------------------------------------
-// /players/career/:playerId[?from=YYYY&to=YYYY] -- aggregated totals across
-// the player's whole career, or a specific inclusive season range when
-// from/to are given (this is the compare-page year-range filter). Uses the
-// v_player_season_* views (which already SUM per season) for offense/defense/
-// special_teams, since those expose a `season` column to filter on; misc has
-// no view, so it's a direct join+SUM instead.
+// /players/career/:playerId[?from=YYYY&to=YYYY&scope=reg|post|all] --
+// aggregated totals across the player's whole career, or a specific
+// inclusive season range when from/to are given (the compare-page
+// year-range filter). `scope` defaults to "reg" (regular season only) --
+// counting playoff games in these totals would unfairly reward players
+// whose teams made deep playoff runs over equally-good players whose teams
+// didn't. Direct join+SUM against the category tables (not the
+// v_player_season_* views, which pre-aggregate REG+playoffs together with
+// no way to separate them back out).
 // ---------------------------------------------------------------------------
-async function getPlayerCareer(DB, playerId, from, to) {
+async function getPlayerCareer(DB, playerId, from, to, scope) {
   const hasRange = from && to;
   const fromY = hasRange ? Number(from) : 1900;
   const toY = hasRange ? Number(to) : 2100;
+  const typeFilter = scopeClause(scope, "g");
 
   const player = await DB.prepare("SELECT player_id, display_name FROM player WHERE player_id = ?")
     .bind(playerId)
@@ -451,43 +458,52 @@ async function getPlayerCareer(DB, playerId, from, to) {
   const [offense, defense, special, misc, teamsRows, seasonsRows, posRow, gamesRow] = await Promise.all([
     DB.prepare(
       `
-      SELECT SUM(completions) completions, SUM(attempts) attempts, SUM(passing_yards) passing_yards,
-             SUM(passing_tds) passing_tds, SUM(passing_interceptions) passing_interceptions,
-             SUM(sacks_suffered) sacks_suffered, SUM(passing_air_yards) passing_air_yards,
-             SUM(passing_first_downs) passing_first_downs, SUM(passing_epa) passing_epa,
-             SUM(passing_2pt_conversions) passing_2pt_conversions,
-             SUM(carries) carries, SUM(rushing_yards) rushing_yards, SUM(rushing_tds) rushing_tds,
-             SUM(rushing_first_downs) rushing_first_downs, SUM(rushing_epa) rushing_epa,
-             SUM(rushing_2pt_conversions) rushing_2pt_conversions,
-             SUM(receptions) receptions, SUM(targets) targets, SUM(receiving_yards) receiving_yards,
-             SUM(receiving_tds) receiving_tds, SUM(receiving_first_downs) receiving_first_downs,
-             SUM(receiving_epa) receiving_epa, SUM(receiving_2pt_conversions) receiving_2pt_conversions,
-             SUM(fantasy_points) fantasy_points, SUM(fantasy_points_ppr) fantasy_points_ppr
-      FROM v_player_season_offense WHERE player_id = ? AND season BETWEEN ? AND ?
+      SELECT SUM(o.completions) completions, SUM(o.attempts) attempts, SUM(o.passing_yards) passing_yards,
+             SUM(o.passing_tds) passing_tds, SUM(o.passing_interceptions) passing_interceptions,
+             SUM(o.sacks_suffered) sacks_suffered, SUM(o.passing_air_yards) passing_air_yards,
+             SUM(o.passing_first_downs) passing_first_downs, SUM(o.passing_epa) passing_epa,
+             SUM(o.passing_2pt_conversions) passing_2pt_conversions,
+             SUM(o.carries) carries, SUM(o.rushing_yards) rushing_yards, SUM(o.rushing_tds) rushing_tds,
+             SUM(o.rushing_first_downs) rushing_first_downs, SUM(o.rushing_epa) rushing_epa,
+             SUM(o.rushing_2pt_conversions) rushing_2pt_conversions,
+             SUM(o.receptions) receptions, SUM(o.targets) targets, SUM(o.receiving_yards) receiving_yards,
+             SUM(o.receiving_tds) receiving_tds, SUM(o.receiving_first_downs) receiving_first_downs,
+             SUM(o.receiving_epa) receiving_epa, SUM(o.receiving_2pt_conversions) receiving_2pt_conversions,
+             SUM(o.fantasy_points) fantasy_points, SUM(o.fantasy_points_ppr) fantasy_points_ppr
+      FROM player_game pg
+      JOIN game g ON g.game_id = pg.game_id
+      JOIN player_game_offense o ON o.player_game_id = pg.player_game_id
+      WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ${typeFilter}
       `
     )
       .bind(playerId, fromY, toY)
       .first(),
     DB.prepare(
       `
-      SELECT SUM(def_tackles_solo) def_tackles_solo, SUM(def_tackle_assists) def_tackle_assists,
-             SUM(def_tackles_for_loss) def_tackles_for_loss, SUM(def_fumbles_forced) def_fumbles_forced,
-             SUM(def_sacks) def_sacks, SUM(def_sack_yards) def_sack_yards, SUM(def_qb_hits) def_qb_hits,
-             SUM(def_interceptions) def_interceptions, SUM(def_interception_yards) def_interception_yards,
-             SUM(def_pass_defended) def_pass_defended, SUM(def_tds) def_tds, SUM(def_safeties) def_safeties
-      FROM v_player_season_defense WHERE player_id = ? AND season BETWEEN ? AND ?
+      SELECT SUM(d.def_tackles_solo) def_tackles_solo, SUM(d.def_tackle_assists) def_tackle_assists,
+             SUM(d.def_tackles_for_loss) def_tackles_for_loss, SUM(d.def_fumbles_forced) def_fumbles_forced,
+             SUM(d.def_sacks) def_sacks, SUM(d.def_sack_yards) def_sack_yards, SUM(d.def_qb_hits) def_qb_hits,
+             SUM(d.def_interceptions) def_interceptions, SUM(d.def_interception_yards) def_interception_yards,
+             SUM(d.def_pass_defended) def_pass_defended, SUM(d.def_tds) def_tds, SUM(d.def_safeties) def_safeties
+      FROM player_game pg
+      JOIN game g ON g.game_id = pg.game_id
+      JOIN player_game_defense d ON d.player_game_id = pg.player_game_id
+      WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ${typeFilter}
       `
     )
       .bind(playerId, fromY, toY)
       .first(),
     DB.prepare(
       `
-      SELECT SUM(fg_made) fg_made, SUM(fg_att) fg_att, SUM(fg_missed) fg_missed, SUM(fg_blocked) fg_blocked,
-             SUM(pat_made) pat_made, SUM(pat_att) pat_att, SUM(gwfg_made) gwfg_made,
-             SUM(pt_att) pt_att, SUM(pt_yards) pt_yards, SUM(pt_net_yards) pt_net_yards, SUM(pt_inside_20) pt_inside_20,
-             SUM(punt_returns) punt_returns, SUM(punt_return_yards) punt_return_yards,
-             SUM(kickoff_returns) kickoff_returns, SUM(kickoff_return_yards) kickoff_return_yards
-      FROM v_player_season_special_teams WHERE player_id = ? AND season BETWEEN ? AND ?
+      SELECT SUM(s.fg_made) fg_made, SUM(s.fg_att) fg_att, SUM(s.fg_missed) fg_missed, SUM(s.fg_blocked) fg_blocked,
+             SUM(s.pat_made) pat_made, SUM(s.pat_att) pat_att, SUM(s.gwfg_made) gwfg_made,
+             SUM(s.pt_att) pt_att, SUM(s.pt_yards) pt_yards, SUM(s.pt_net_yards) pt_net_yards, SUM(s.pt_inside_20) pt_inside_20,
+             SUM(s.punt_returns) punt_returns, SUM(s.punt_return_yards) punt_return_yards,
+             SUM(s.kickoff_returns) kickoff_returns, SUM(s.kickoff_return_yards) kickoff_return_yards
+      FROM player_game pg
+      JOIN game g ON g.game_id = pg.game_id
+      JOIN player_game_special_teams s ON s.player_game_id = pg.player_game_id
+      WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ${typeFilter}
       `
     )
       .bind(playerId, fromY, toY)
@@ -504,40 +520,40 @@ async function getPlayerCareer(DB, playerId, from, to) {
       FROM player_game pg
       JOIN game g ON g.game_id = pg.game_id
       JOIN player_game_misc m ON m.player_game_id = pg.player_game_id
-      WHERE pg.player_id = ? AND g.season BETWEEN ? AND ?
+      WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ${typeFilter}
       `
     )
       .bind(playerId, fromY, toY)
       .first(),
     DB.prepare(
       `SELECT DISTINCT pg.team FROM player_game pg JOIN game g ON g.game_id = pg.game_id
-       WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ORDER BY pg.team`
+       WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ${typeFilter} ORDER BY pg.team`
     )
       .bind(playerId, fromY, toY)
       .all(),
     DB.prepare(
       `SELECT DISTINCT g.season FROM player_game pg JOIN game g ON g.game_id = pg.game_id
-       WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ORDER BY g.season`
+       WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ${typeFilter} ORDER BY g.season`
     )
       .bind(playerId, fromY, toY)
       .all(),
     DB.prepare(
       `SELECT pg.position_code FROM player_game pg JOIN game g ON g.game_id = pg.game_id
-       WHERE pg.player_id = ? AND g.season BETWEEN ? AND ?
+       WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ${typeFilter}
        ORDER BY g.season DESC, g.week DESC LIMIT 1`
     )
       .bind(playerId, fromY, toY)
       .first(),
     DB.prepare(
       `SELECT COUNT(*) AS n FROM player_game pg JOIN game g ON g.game_id = pg.game_id
-       WHERE pg.player_id = ? AND g.season BETWEEN ? AND ?`
+       WHERE pg.player_id = ? AND g.season BETWEEN ? AND ? ${typeFilter}`
     )
       .bind(playerId, fromY, toY)
       .first(),
   ]);
 
   const seasons = seasonsRows.results.map((r) => r.season);
-  if (!seasons.length) return null; // player exists in the dimension table but has no games in this range
+  if (!seasons.length) return null; // player exists in the dimension table but has no games in this range/scope
 
   const career_totals = { ...offense, ...defense, ...special, ...misc };
   for (const k of Object.keys(career_totals)) {
@@ -555,6 +571,7 @@ async function getPlayerCareer(DB, playerId, from, to) {
     teams: teamsRows.results.map((r) => r.team),
     seasons,
     games_played: gamesRow.n,
+    scope: normalizeScope(scope),
     updated: new Date().toISOString(),
     career_totals,
   };
@@ -899,6 +916,21 @@ const TEAM_STAT_CATALOG = [
   { id: "penalty_yards", label: "Penalty Yards", table: "team_game_misc", column: "penalty_yards" },
 ];
 
+// "reg" (default) = regular season only -- the fair, apples-to-apples
+// comparison, since not every player/team makes the playoffs. "post" =
+// playoff games only (WC/DIV/CON/SB). "all" = regular season + playoffs
+// combined. Used by /leaders/* and /players/career/:id so the same
+// fairness logic applies to leaderboards, career totals, and Compare.
+function normalizeScope(raw) {
+  return raw === "post" || raw === "all" ? raw : "reg";
+}
+function scopeClause(scope, alias) {
+  const sc = normalizeScope(scope);
+  if (sc === "post") return `AND ${alias}.game_type_code != 'REG'`;
+  if (sc === "all") return "";
+  return `AND ${alias}.game_type_code = 'REG'`;
+}
+
 function getLeadersCatalog() {
   return {
     players: PLAYER_STAT_CATALOG.map(({ id, label, position }) => ({ id, label, position: position || null })),
@@ -906,7 +938,7 @@ function getLeadersCatalog() {
   };
 }
 
-async function getPlayerLeaders(DB, statId, from, to, position, limit) {
+async function getPlayerLeaders(DB, statId, from, to, position, limit, scope) {
   const spec = PLAYER_STAT_CATALOG.find((s) => s.id === statId);
   if (!spec) return null;
 
@@ -917,6 +949,7 @@ async function getPlayerLeaders(DB, statId, from, to, position, limit) {
   // but cost an extra ~1.5s per query (correlated subquery per player), not
   // worth it for a display-only field.
   const posFilter = position ? "AND pg.position_code = ?" : "";
+  const typeFilter = scopeClause(scope, "g");
   const sql = `
     SELECT pg.player_id, p.display_name AS name, MAX(pg.position_code) AS position,
            SUM(t.${spec.column}) AS total, COUNT(*) AS games
@@ -924,7 +957,7 @@ async function getPlayerLeaders(DB, statId, from, to, position, limit) {
     JOIN game g ON g.game_id = pg.game_id
     JOIN ${spec.table} t ON t.player_game_id = pg.player_game_id
     JOIN player p ON p.player_id = pg.player_id
-    WHERE g.season BETWEEN ? AND ? ${posFilter}
+    WHERE g.season BETWEEN ? AND ? ${typeFilter} ${posFilter}
     GROUP BY pg.player_id
     HAVING total IS NOT NULL
     ORDER BY total DESC
@@ -932,31 +965,33 @@ async function getPlayerLeaders(DB, statId, from, to, position, limit) {
   `;
   const params = position ? [from, to, position, limit] : [from, to, limit];
   const { results } = await DB.prepare(sql).bind(...params).all();
-  return { stat: statId, label: spec.label, from, to, position: position || null, leaders: results };
+  return { stat: statId, label: spec.label, from, to, position: position || null, scope: normalizeScope(scope), leaders: results };
 }
 
-async function getTeamLeaders(DB, statId, from, to, limit) {
+async function getTeamLeaders(DB, statId, from, to, limit, scope) {
   if (statId === "points_scored") {
+    const typeFilter = scopeClause(scope, "x");
     const { results } = await DB.prepare(
       `
       SELECT team, tn.team_name, SUM(pts) AS total, COUNT(*) AS games
       FROM (
-        SELECT home_team AS team, home_score AS pts, season FROM game WHERE home_score IS NOT NULL
+        SELECT home_team AS team, home_score AS pts, season, game_type_code FROM game WHERE home_score IS NOT NULL
         UNION ALL
-        SELECT away_team AS team, away_score AS pts, season FROM game WHERE away_score IS NOT NULL
+        SELECT away_team AS team, away_score AS pts, season, game_type_code FROM game WHERE away_score IS NOT NULL
       ) x
       JOIN team tn ON tn.team_abbr = x.team
-      WHERE season BETWEEN ? AND ?
+      WHERE x.season BETWEEN ? AND ? ${typeFilter}
       GROUP BY team
       ORDER BY total DESC
       LIMIT ?
       `
     ).bind(from, to, limit).all();
-    return { stat: statId, label: "Points Scored", from, to, leaders: results };
+    return { stat: statId, label: "Points Scored", from, to, scope: normalizeScope(scope), leaders: results };
   }
 
   const spec = TEAM_STAT_CATALOG.find((s) => s.id === statId);
   if (!spec) return null;
+  const typeFilter = scopeClause(scope, "g");
 
   const { results } = await DB.prepare(
     `
@@ -965,12 +1000,12 @@ async function getTeamLeaders(DB, statId, from, to, limit) {
     JOIN game g ON g.game_id = tg.game_id
     JOIN ${spec.table} t ON t.team_game_id = tg.team_game_id
     JOIN team tn ON tn.team_abbr = tg.team
-    WHERE g.season BETWEEN ? AND ?
+    WHERE g.season BETWEEN ? AND ? ${typeFilter}
     GROUP BY tg.team
     HAVING total IS NOT NULL
     ORDER BY total DESC
     LIMIT ?
     `
   ).bind(from, to, limit).all();
-  return { stat: statId, label: spec.label, from, to, leaders: results };
+  return { stat: statId, label: spec.label, from, to, scope: normalizeScope(scope), leaders: results };
 }
