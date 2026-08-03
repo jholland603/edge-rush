@@ -139,7 +139,7 @@
     } else {
       const options = manifest.weeks.map((w) => ({
         value: `${w.season}-${w.week}`,
-        label: `${w.season} &middot; Week ${w.week}`,
+        label: `${w.season} · Week ${w.week}`,
       }));
       Util.fillSelect(weekSelect, options);
       const wanted = params.get("week");
