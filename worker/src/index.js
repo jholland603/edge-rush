@@ -536,9 +536,13 @@ async function getPlayerCareer(DB, playerId, from, to) {
 // ---------------------------------------------------------------------------
 async function getModelManifest(DB) {
   const { results } = await DB.prepare(
-    "SELECT DISTINCT season, week FROM model ORDER BY season, week"
+    `
+    SELECT DISTINCT m.season, m.week, g.game_type_code AS game_type
+    FROM model m JOIN game g ON g.game_id = m.game_id
+    ORDER BY m.season, m.week
+    `
   ).all();
-  const weeks = results.map((r) => ({ season: r.season, week: r.week }));
+  const weeks = results.map((r) => ({ season: r.season, week: r.week, game_type: r.game_type }));
   return {
     weeks,
     latest: weeks.length ? weeks[weeks.length - 1] : null,
@@ -590,10 +594,12 @@ async function getModelWeek(DB, season, week) {
 // ---------------------------------------------------------------------------
 async function getPicksLog(DB) {
   const { results } = await DB.prepare(
-    `SELECT logged_at, season, week, game_id, gameday, home_team, away_team,
-            market_spread, model_spread, edge, p_home_covers, bet_placed,
-            closing_line, actual_result, clv, side, covered
-     FROM picks_log ORDER BY logged_at, game_id`
+    `SELECT pl.logged_at, pl.season, pl.week, g.game_type_code AS game_type, pl.game_id, pl.gameday,
+            pl.home_team, pl.away_team,
+            pl.market_spread, pl.model_spread, pl.edge, pl.p_home_covers, pl.bet_placed,
+            pl.closing_line, pl.actual_result, pl.clv, pl.side, pl.covered
+     FROM picks_log pl JOIN game g ON g.game_id = pl.game_id
+     ORDER BY pl.logged_at, pl.game_id`
   ).all();
   return results;
 }
@@ -720,7 +726,7 @@ async function getGameDetail(DB, gameId) {
     getTeamAggregate(DB, game.away_team, game.season, null),
     DB.prepare(
       `
-      SELECT game_id, season, week, gameday, home_team, away_team, home_score, away_score, result, spread_line
+      SELECT game_id, season, week, game_type_code AS game_type, gameday, home_team, away_team, home_score, away_score, result, spread_line
       FROM game
       WHERE game_id != ? AND result IS NOT NULL
         AND ((home_team = ? AND away_team = ?) OR (home_team = ? AND away_team = ?))

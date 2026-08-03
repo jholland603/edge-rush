@@ -79,7 +79,7 @@
         const rushEpaP = r.carries ? r.rushing_epa / r.carries : null;
         return `
           <tr>
-            <td>${r.week}</td>
+            <td>${Util.escapeHtml(Util.weekLabelShort(r.week, r.season_type))}</td>
             <td>${Util.escapeHtml(r.season_type)}</td>
             <td>${r.is_home ? "vs" : "@"} ${Util.escapeHtml(teamName(r.opponent_team))}</td>
             <td class="num">${r.passing_yards ?? "-"}</td>

@@ -86,7 +86,7 @@
           }
           return `
             <tr>
-              <td>${r.season} Wk${r.week}</td>
+              <td>${r.season} ${Util.escapeHtml(Util.weekLabel(r.week, r.game_type))}</td>
               <td>${Util.formatDate(r.gameday)}</td>
               <td><a href="game.html?id=${encodeURIComponent(r.game_id)}">${Util.escapeHtml(teamName(r.away_team))} @ ${Util.escapeHtml(teamName(r.home_team))}</a></td>
               <td class="num">${Util.favoredTeamLine(r.market_spread, r.home_team, r.away_team)}</td>
@@ -139,7 +139,7 @@
     } else {
       const options = manifest.weeks.map((w) => ({
         value: `${w.season}-${w.week}`,
-        label: `${w.season} · Week ${w.week}`,
+        label: `${w.season} · ${Util.weekLabel(w.week, w.game_type)}`,
       }));
       Util.fillSelect(weekSelect, options);
       const wanted = params.get("week");

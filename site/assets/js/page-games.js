@@ -44,24 +44,13 @@
     modelByGameId = new Map(model.map((m) => [m.game_id, m]));
 
     const weeks = [...new Set(currentGames.map((g) => g.week))].sort((a, b) => a - b);
-    const weekOptions = weeks.map((w) => ({ value: String(w), label: weekLabel(w) }));
+    const weekOptions = weeks.map((w) => {
+      const example = currentGames.find((g) => g.week === w);
+      return { value: String(w), label: Util.weekLabel(w, example && example.game_type) };
+    });
     Util.fillSelect(weekSelect, weekOptions, { placeholder: "All weeks" });
     const wanted = params.get("week");
     weekSelect.value = weeks.map(String).includes(wanted) ? wanted : "";
-  }
-
-  // Postseason weeks have a fixed game_type per week (REG weeks don't --
-  // those just stay "Week N"). Look up any game in that week to find its type.
-  const PLAYOFF_ROUND_LABELS = {
-    WC: "Wild Card",
-    DIV: "Divisional",
-    CON: "Conference Championship",
-    SB: "Super Bowl",
-  };
-  function weekLabel(week) {
-    const example = currentGames.find((g) => g.week === week);
-    const label = example && PLAYOFF_ROUND_LABELS[example.game_type];
-    return label || `Week ${week}`;
   }
 
   function edgeBadge(g) {
@@ -110,7 +99,7 @@
         const score = played ? `${g.away_score}&ndash;${g.home_score}` : "-";
         return `
           <tr>
-            <td>${g.week}</td>
+            <td>${Util.escapeHtml(Util.weekLabelShort(g.week, g.game_type))}</td>
             <td>${Util.escapeHtml(g.game_type)}</td>
             <td>${Util.formatDate(g.gameday)}</td>
             <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(teamName(g.away_team))} @ ${Util.escapeHtml(teamName(g.home_team))}</a></td>

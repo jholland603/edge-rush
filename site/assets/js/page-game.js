@@ -33,7 +33,7 @@
     const ou = ouResult(g);
 
     titleEl.textContent = `${teamNames[g.away_team] || g.away_team} @ ${teamNames[g.home_team] || g.home_team}`;
-    subtitleEl.textContent = `${g.season} · Week ${g.week} · ${g.game_type} · ${Util.formatDate(g.gameday)}`;
+    subtitleEl.textContent = `${g.season} · ${Util.weekLabel(g.week, g.game_type)} · ${Util.formatDate(g.gameday)}`;
 
     const weather = [];
     const roofLabel = Util.roofLabel(g.roof, g.stadium_id);
@@ -160,7 +160,7 @@
         const ats = atsResult(g);
         return `
           <tr>
-            <td>${g.season} Wk${g.week}</td>
+            <td>${g.season} ${Util.escapeHtml(Util.weekLabel(g.week, g.game_type))}</td>
             <td>${Util.formatDate(g.gameday)}</td>
             <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(teamNames[g.away_team] || g.away_team)} @ ${Util.escapeHtml(teamNames[g.home_team] || g.home_team)}</a></td>
             <td class="num">${g.away_score}&ndash;${g.home_score}</td>

@@ -88,6 +88,26 @@ const Util = {
     return parts.join(", ");
   },
 
+  /** Postseason round names, keyed by game_type_code / season_type. */
+  PLAYOFF_ROUND_LABELS: {
+    WC: "Wild Card",
+    DIV: "Divisional",
+    CON: "Conference Championship",
+    SB: "Super Bowl",
+  },
+
+  /** "Week 3" for regular season, "Wild Card" etc. for postseason -- for
+   * standalone text (subtitles, dropdown options, inline "2024 Week 3"). */
+  weekLabel(week, gameType) {
+    return Util.PLAYOFF_ROUND_LABELS[gameType] || `Week ${week}`;
+  },
+
+  /** Bare "3" for regular season, "Wild Card" etc. for postseason -- for
+   * table cells under an existing "Wk"/"Week" column header. */
+  weekLabelShort(week, gameType) {
+    return Util.PLAYOFF_ROUND_LABELS[gameType] || String(week);
+  },
+
   formatDate(dateStr) {
     if (!dateStr) return "-";
     const d = new Date(`${dateStr}T00:00:00`);

@@ -131,7 +131,7 @@
           .map(
             (w) => `
             <tr>
-              <td>${w.week}</td>
+              <td>${Util.escapeHtml(Util.weekLabelShort(w.week, w.season_type))}</td>
               <td>${Util.escapeHtml(w.season_type)}</td>
               <td>${w.opponent_team ? `${w.is_home ? "vs" : "@"} ${Util.escapeHtml(teamName(w.opponent_team))}` : "-"}</td>
               ${columns.map((c) => `<td class="num">${c.render(w)}</td>`).join("")}
