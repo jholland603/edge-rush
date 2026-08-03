@@ -62,6 +62,11 @@ const Data = {
 
   getGameDetail: (gameId) => fetchJSON(`${API_BASE}/game/${encodeURIComponent(gameId)}`),
 
+  // Players who logged offensive touches for `team` in a single game --
+  // the breakdown behind a team-stats weekly-log row.
+  getGamePlayers: (gameId, team) =>
+    fetchJSON(`${API_BASE}/game/${encodeURIComponent(gameId)}/players/${encodeURIComponent(team)}`),
+
   getTrends: () => fetchJSON(`${API_BASE}/trends`),
 
   getLeadersCatalog: () => fetchJSON(`${API_BASE}/leaders/catalog`),

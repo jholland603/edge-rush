@@ -22,6 +22,10 @@
  *                                           prediction (if any), each team's season-to-date
  *                                           (before this game) and full-season stat totals,
  *                                           and head-to-head history between the two teams
+ *   /game/:gameId/players/:team         -- every player on `team` who recorded a snap of
+ *                                           offense in this game (passing/rushing/receiving),
+ *                                           powers the "show players" expand row on the
+ *                                           teams.html weekly log
  *   /trends                             -- situational ATS trends (home dogs by size,
  *                                           rest-advantage buckets, divisional vs. not),
  *                                           full 1999-present history, used by trends.html
@@ -124,6 +128,10 @@ export default {
         const detail = await getGameDetail(DB, decodeURIComponent(m[1]));
         if (!detail) return notFound(`no game ${m[1]}`);
         return json(detail);
+      }
+      if ((m = path.match(/^\/game\/([^/]+)\/players\/([^/]+)$/))) {
+        const players = await getGameTeamPlayers(DB, decodeURIComponent(m[1]), decodeURIComponent(m[2]));
+        return json({ game_id: m[1], team: m[2], players });
       }
 
       if (path === "/trends") {
@@ -800,6 +808,34 @@ async function getGameDetail(DB, gameId) {
     head_to_head: h2h.results,
     updated: new Date().toISOString(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// /game/:gameId/players/:team -- the offensive players (passing/rushing/
+// receiving) on `team` in this specific game, i.e. the breakdown behind the
+// team-total columns shown per row on teams.html. Filters out players with
+// no offensive touches (attempts/carries/targets all 0) so defense/special
+// teams-only players don't clutter the list -- a lineman or corner still
+// has a player_game row for this game but nothing to show here.
+// ---------------------------------------------------------------------------
+async function getGameTeamPlayers(DB, gameId, team) {
+  const { results } = await DB.prepare(
+    `
+    SELECT pg.player_id, p.display_name, pg.position_code AS position,
+           o.completions, o.attempts, o.passing_yards, o.passing_tds, o.passing_interceptions,
+           o.carries, o.rushing_yards, o.rushing_tds,
+           o.receptions, o.targets, o.receiving_yards, o.receiving_tds
+    FROM player_game pg
+    JOIN player p ON p.player_id = pg.player_id
+    JOIN player_game_offense o ON o.player_game_id = pg.player_game_id
+    WHERE pg.game_id = ? AND pg.team = ?
+      AND (o.attempts > 0 OR o.carries > 0 OR o.targets > 0)
+    ORDER BY o.passing_yards DESC, o.rushing_yards DESC, o.receiving_yards DESC
+    `
+  )
+    .bind(gameId, team)
+    .all();
+  return results;
 }
 
 // ---------------------------------------------------------------------------

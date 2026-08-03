@@ -821,6 +821,33 @@ shows full names instead of abbreviations, same reasoning.
   discoverable-but-not-top-level treatment as the Compare page. This was an
   explicit choice from a multiple-choice question, not a default.
 
+## Player breakdown under each team-stats weekly-log row
+
+- teams.html's weekly log shows team-level totals per game (Pass Yds, Rush
+  Yds, etc.) but not who actually produced them. Added a "Players ▸" toggle
+  as the last column of each row -- clicking it expands a nested row showing
+  every player on that team who had an offensive touch in that specific game
+  (passing/rushing/receiving lines), so the team total is traceable back to
+  the players behind it. Click again to collapse.
+- New Worker route: `GET /game/:gameId/players/:team` (`getGameTeamPlayers`)
+  -- single-game, single-team query joining `player_game` + `player` +
+  `player_game_offense`, filtered to `attempts > 0 OR carries > 0 OR
+  targets > 0` so defense/special-teams-only players (who still have a
+  `player_game` row for the game) don't clutter the list. ~20-55ms against
+  D1 -- this is a single-game lookup, nothing like the multi-season leaderboard
+  scans.
+  Doesn't need `scope` filtering -- a single `game_id` is inherently either
+  regular season or playoffs already, there's nothing to toggle.
+- `data.js`: `getGamePlayers(gameId, team)`.
+- `page-teams.js`: each weekly-log row renders a paired hidden `<tr
+  class="expand-row">` under it; the toggle button fetches lazily (only on
+  first expand) and caches by `${gameId}:${team}` so re-toggling doesn't
+  re-fetch. Player names link to players.html.
+- New CSS: `.expand-toggle` (link-styled button), `tr.expand-row td`
+  (slightly elevated background so the nested table reads as "inside" the
+  row it belongs to), `.subtable` (tighter padding, static header -- so it
+  doesn't inherit the outer table's sticky-header behavior).
+
 ## Regular season vs. playoffs: fairness fix across Leaders, Career, and Compare
 
 - The fairness problem: player/team season and career totals were silently
