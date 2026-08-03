@@ -233,7 +233,8 @@ async function getGamesSeason(DB, season) {
 async function getTeamsSeason(DB, season) {
   const [hub, offense, defense, special, misc] = await Promise.all([
     DB.prepare(
-      `SELECT tg.team_game_id, tg.team, tg.opponent_team, g.week, g.game_type_code AS season_type, tg.game_id
+      `SELECT tg.team_game_id, tg.team, tg.opponent_team, g.week, g.game_type_code AS season_type, tg.game_id,
+              CASE WHEN tg.team = g.home_team THEN 1 ELSE 0 END AS is_home
        FROM team_game tg JOIN game g ON g.game_id = tg.game_id
        WHERE g.season = ? ORDER BY tg.team, g.week`
     )
@@ -273,7 +274,7 @@ async function getTeamsSeason(DB, season) {
   const teamById = new Map();
   for (const row of hub.results) {
     const { team_game_id, team, ...rest } = row;
-    byId.set(team_game_id, rest);
+    byId.set(team_game_id, { ...rest, is_home: !!row.is_home });
     teamById.set(team_game_id, team);
   }
   for (const catResult of [offense, defense, special, misc]) {
@@ -313,7 +314,8 @@ async function getPlayersSeason(DB, season) {
     DB.prepare(
       `SELECT pg.player_game_id, pg.player_id, p.display_name AS player_display_name,
               pg.position_code AS position, pg.team, pg.opponent_team,
-              g.week, g.game_type_code AS season_type, pg.game_id
+              g.week, g.game_type_code AS season_type, pg.game_id,
+              CASE WHEN pg.team = g.home_team THEN 1 ELSE 0 END AS is_home
        FROM player_game pg
        JOIN game g ON g.game_id = pg.game_id
        JOIN player p ON p.player_id = pg.player_id
@@ -357,7 +359,7 @@ async function getPlayersSeason(DB, season) {
     const { player_game_id, player_id, player_display_name, position, team, ...rest } = row;
     // "current team" for the season header = the team on this player's
     // first game that season (matches the original build_json.py logic).
-    byId.set(player_game_id, { player_display_name, position, team, weekRow: rest });
+    byId.set(player_game_id, { player_display_name, position, team, weekRow: { ...rest, is_home: !!row.is_home } });
     playerIdById.set(player_game_id, player_id);
   }
   for (const catResult of [offense, defense, special, misc]) {
@@ -542,9 +544,11 @@ async function getModelManifest(DB) {
 // ---------------------------------------------------------------------------
 async function getModelWeek(DB, season, week) {
   const { results } = await DB.prepare(
-    `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged,
-            market_total, updated, note
-     FROM model WHERE season = ? AND week = ? ORDER BY game_id`
+    `SELECT m.game_id, m.matchup, g.home_team, g.away_team,
+            m.market_spread, m.model_spread, m.edge, m.p_home_covers, m.flagged,
+            m.market_total, m.updated, m.note
+     FROM model m JOIN game g ON g.game_id = m.game_id
+     WHERE m.season = ? AND m.week = ? ORDER BY m.game_id`
   )
     .bind(season, week)
     .all();
@@ -556,7 +560,10 @@ async function getModelWeek(DB, season, week) {
     updated: results[0].updated,
     note: results[0].note,
     games: results.map((r) => ({
+      game_id: r.game_id,
       matchup: r.matchup,
+      home_team: r.home_team,
+      away_team: r.away_team,
       market_spread: r.market_spread,
       model_spread: r.model_spread,
       edge: r.edge,

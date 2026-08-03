@@ -612,14 +612,32 @@ overlay and a click-through to a new single-game detail page.
 **Follow-up UI polish:** `/index` now also returns `team_names` (`{ABBR:
 "Full Name"}`, from `team.team_name`). `Util.favoredTeamLine(value, homeAbbr,
 awayAbbr)` (new, in `util.js`) labels which team a "positive = home
-favored" value (spread_line or model edge) actually favors, bookmaker-style
-(favorite always shown negative, e.g. `"NE -3.5"` instead of a bare `+3.5`)
--- used for `games.html`'s Line/Model Edge columns and `game.html`'s spread/
-model-prediction display and head-to-head Line column. `games.html`'s
-Matchup column and `game.html`'s title/head-to-head Matchup column now show
-full team names (via `team_names`); tight tabular columns (Line, Model Edge,
-the team-comparison table's headers) stay abbreviated on purpose -- this was
-an explicit user preference, not a general "always spell out teams" rule.
+favored" value (spread_line, model_spread, market_spread, edge, or
+closing_line -- all the same convention) actually favors, bookmaker-style
+(favorite always shown negative, e.g. `"NE -3.5"` instead of a bare `+3.5`).
+This landed everywhere that convention shows up: `games.html`'s Line/Model
+Edge columns, `game.html`'s spread/model-prediction display and
+head-to-head Line column, and `picks.html`'s Market/Model/Edge/Closing
+columns on both the weekly table and the full picks log (CLV was
+deliberately left alone -- it's already framed from "the side we picked,"
+not a home/away spread). Matchup-style columns (`games.html`, `game.html`'s
+title/head-to-head, `picks.html`'s both tables) show full team names via
+`team_names`; tight tabular columns (Line, Model Edge, Market/Model/Edge/
+Closing, the game page's team-comparison table headers) stay abbreviated on
+purpose -- explicit user preference, not a general "always spell out teams"
+rule.
+
+**Bug fix: "every game looked like an away game."** `teams.html` (team
+weekly log) and `players.html` (player weekly log) both hardcoded `@{opponent}`
+on every row, regardless of whether the team/player was actually home or
+away that week -- there was no home/away signal in the data being returned
+at all. Fixed by adding `CASE WHEN team = g.home_team THEN 1 ELSE 0 END AS
+is_home` to the hub queries in `getTeamsSeason`/`getPlayersSeason`
+(`worker/src/index.js`), and both pages now render `vs {full name}` for
+home games, `@ {full name}` for away games. Verified directly against D1
+with KC's actual 2025 schedule (alternates correctly: LAC@KC away, PHI home,
+NYG away, BAL home, ...). `teams.html`'s team-select dropdown also now
+shows full names instead of abbreviations, same reasoning.
 
 ## Useful file map
 

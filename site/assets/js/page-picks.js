@@ -5,6 +5,11 @@
   const logTableWrap = document.getElementById("log-table-wrap");
 
   const params = new URLSearchParams(location.search);
+  let teamNames = {};
+
+  function teamName(abbr) {
+    return teamNames[abbr] || abbr;
+  }
 
   function flagBadge(flagged) {
     return flagged
@@ -23,10 +28,10 @@
         .map(
           (g) => `
           <tr>
-            <td>${Util.escapeHtml(g.matchup)}</td>
-            <td class="num">${Util.signed(g.market_spread, 1)}</td>
-            <td class="num">${Util.signed(g.model_spread, 1)}</td>
-            <td class="num">${Util.signed(g.edge, 2)}</td>
+            <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(teamName(g.away_team))} @ ${Util.escapeHtml(teamName(g.home_team))}</a></td>
+            <td class="num">${Util.favoredTeamLine(g.market_spread, g.home_team, g.away_team)}</td>
+            <td class="num">${Util.favoredTeamLine(g.model_spread, g.home_team, g.away_team)}</td>
+            <td class="num">${Util.favoredTeamLine(g.edge, g.home_team, g.away_team)}</td>
             <td class="num">${Util.pct(g.p_home_covers, 1)}</td>
             <td class="num">${Util.num(g.market_total, 1)}</td>
             <td>${flagBadge(g.flagged)}</td>
@@ -83,11 +88,11 @@
             <tr>
               <td>${r.season} Wk${r.week}</td>
               <td>${Util.formatDate(r.gameday)}</td>
-              <td>${Util.escapeHtml(r.away_team)} @ ${Util.escapeHtml(r.home_team)}</td>
-              <td class="num">${Util.signed(r.market_spread, 1)}</td>
-              <td class="num">${Util.signed(r.model_spread, 1)}</td>
-              <td class="num">${Util.signed(r.edge, 2)}</td>
-              <td class="num">${r.closing_line === null || r.closing_line === undefined ? "-" : Util.signed(r.closing_line, 1)}</td>
+              <td><a href="game.html?id=${encodeURIComponent(r.game_id)}">${Util.escapeHtml(teamName(r.away_team))} @ ${Util.escapeHtml(teamName(r.home_team))}</a></td>
+              <td class="num">${Util.favoredTeamLine(r.market_spread, r.home_team, r.away_team)}</td>
+              <td class="num">${Util.favoredTeamLine(r.model_spread, r.home_team, r.away_team)}</td>
+              <td class="num">${Util.favoredTeamLine(r.edge, r.home_team, r.away_team)}</td>
+              <td class="num">${Util.favoredTeamLine(r.closing_line, r.home_team, r.away_team)}</td>
               <td class="num">${r.clv === null || r.clv === undefined ? "-" : Util.signed(r.clv, 2)}</td>
               <td>${statusBadge}</td>
             </tr>
@@ -119,6 +124,13 @@
     history.replaceState(null, "", `${location.pathname}?${p.toString()}`);
     renderWeek();
   });
+
+  try {
+    const index = await Data.getIndex();
+    teamNames = index.team_names || {};
+  } catch (err) {
+    // Non-fatal -- falls back to abbreviations if /index can't be reached.
+  }
 
   try {
     const manifest = await Data.getModelManifest();

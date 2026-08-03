@@ -6,6 +6,11 @@
 
   const params = new URLSearchParams(location.search);
   let currentSeasonData = null;
+  let teamNames = {};
+
+  function teamName(abbr) {
+    return teamNames[abbr] || abbr;
+  }
 
   function syncUrl() {
     const p = new URLSearchParams();
@@ -16,6 +21,7 @@
 
   async function loadSeasons() {
     const index = await Data.getIndex();
+    teamNames = index.team_names || {};
     const seasons = [...index.seasons.teams].sort((a, b) => b - a);
     Util.fillSelect(seasonSelect, seasons);
     const wanted = Number(params.get("season"));
@@ -26,10 +32,13 @@
     Util.showLoading(tableWrap);
     const season = seasonSelect.value;
     currentSeasonData = await Data.getTeamsSeason(season);
-    const teamNames = Object.keys(currentSeasonData.teams).sort();
-    Util.fillSelect(teamSelect, teamNames);
+    const teamAbbrs = Object.keys(currentSeasonData.teams).sort();
+    Util.fillSelect(
+      teamSelect,
+      teamAbbrs.map((abbr) => ({ value: abbr, label: teamName(abbr) }))
+    );
     const wanted = params.get("team");
-    teamSelect.value = teamNames.includes(wanted) ? wanted : teamNames[0];
+    teamSelect.value = teamAbbrs.includes(wanted) ? wanted : teamAbbrs[0];
   }
 
   function renderTeam() {
@@ -72,7 +81,7 @@
           <tr>
             <td>${r.week}</td>
             <td>${Util.escapeHtml(r.season_type)}</td>
-            <td>@${Util.escapeHtml(r.opponent_team)}</td>
+            <td>${r.is_home ? "vs" : "@"} ${Util.escapeHtml(teamName(r.opponent_team))}</td>
             <td class="num">${r.passing_yards ?? "-"}</td>
             <td class="num">${r.passing_tds ?? "-"}</td>
             <td class="num">${Util.signed(passEpaP, 2)}</td>

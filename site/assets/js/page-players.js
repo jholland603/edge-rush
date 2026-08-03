@@ -5,6 +5,11 @@
 
   const params = new URLSearchParams(location.search);
   let playersIndex = null; // { id: {name, position, seasons} }
+  let teamNames = {};
+
+  function teamName(abbr) {
+    return teamNames[abbr] || abbr;
+  }
 
   const { groupFor, CAREER_STAT_GROUPS, statCardValue, WEEK_COLUMNS, FALLBACK_WEEK_COLUMNS } = PlayerStats;
 
@@ -128,7 +133,7 @@
             <tr>
               <td>${w.week}</td>
               <td>${Util.escapeHtml(w.season_type)}</td>
-              <td>@${Util.escapeHtml(w.opponent_team ?? "-")}</td>
+              <td>${w.opponent_team ? `${w.is_home ? "vs" : "@"} ${Util.escapeHtml(teamName(w.opponent_team))}` : "-"}</td>
               ${columns.map((c) => `<td class="num">${c.render(w)}</td>`).join("")}
             </tr>`
           )
@@ -171,6 +176,7 @@
   try {
     const index = await Data.getIndex();
     playersIndex = index.players;
+    teamNames = index.team_names || {};
     const wantedId = params.get("id");
     if (wantedId && playersIndex[wantedId]) {
       searchInput.value = playersIndex[wantedId].name;
