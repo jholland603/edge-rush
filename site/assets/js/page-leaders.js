@@ -145,8 +145,9 @@
     teamNames = index.team_names || {};
 
     const seasons = [...index.seasons.games].sort((a, b) => a - b);
-    Util.fillSelect(fromSelect, seasons);
-    Util.fillSelect(toSelect, seasons);
+    const seasonsDesc = [...seasons].sort((a, b) => b - a);
+    Util.fillSelect(fromSelect, seasonsDesc);
+    Util.fillSelect(toSelect, seasonsDesc);
 
     const wantedScope = params.get("scope");
     scopeSelect.value = wantedScope === "teams" ? "teams" : "players";
