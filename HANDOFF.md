@@ -789,6 +789,22 @@ shows full names instead of abbreviations, same reasoning.
   a reason for lowered enthusiasm, not a final verdict (a multivariate
   regression could still find something the naive bucket split misses).
 
+## Player stat picks were curated, not exhaustive -- added QB efficiency stats
+
+- `site/assets/js/player-stats.js` (`CAREER_STAT_GROUPS`, `WEEK_COLUMNS`)
+  was a deliberate, hand-picked subset per position group (headline
+  counting stats + EPA + one efficiency metric) to keep the stat-card grid
+  and weekly-log table scannable, not a dump of every column nflverse
+  provides. Completions/attempts were only ever shown combined ("Cmp/Att")
+  in the weekly log table, not on the career card, and Yds/Att wasn't shown
+  anywhere -- a real gap, not intentional.
+- Added to `CAREER_STAT_GROUPS.QB`: separate `Attempts`/`Completions` cards,
+  computed `Cmp %`, computed `Yds/Att`. Added `Y/A` column to
+  `QB_WEEK_COLUMNS`. All derived from `completions`/`attempts`/
+  `passing_yards`, already present in the API response (same fields
+  `passerRating()` already consumed) -- no Worker or data changes needed,
+  pure front-end. No redeploy required, just push the site.
+
 ## Situational trends page + big-home-dog signal
 
 - New Worker route `/trends` (`getTrends` in `worker/src/index.js`): three

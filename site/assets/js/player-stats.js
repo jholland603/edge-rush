@@ -46,7 +46,11 @@ function passerRating(cmp, att, yds, td, int) {
 // across games, not a real career rate, so it's computed correctly here).
 const CAREER_STAT_GROUPS = {
   QB: [
+    { key: "attempts", label: "Attempts" },
+    { key: "completions", label: "Completions" },
+    { compute: (t) => (t.attempts ? (100 * t.completions) / t.attempts : null), label: "Cmp %", decimals: 1 },
     { key: "passing_yards", label: "Pass Yds" },
+    { compute: (t) => (t.attempts ? t.passing_yards / t.attempts : null), label: "Yds/Att", decimals: 1 },
     { key: "passing_tds", label: "Pass TD" },
     { key: "passing_interceptions", label: "INT" },
     { compute: (t) => passerRating(t.completions, t.attempts, t.passing_yards, t.passing_tds, t.passing_interceptions), label: "Passer Rating", decimals: 1 },
@@ -138,6 +142,7 @@ const OFFENSE_WEEK_COLUMNS = [
 const QB_WEEK_COLUMNS = [
   { label: "Cmp/Att", render: (w) => `${w.completions ?? 0}/${w.attempts ?? 0}` },
   { label: "Pass Yds", render: (w) => w.passing_yards ?? 0 },
+  { label: "Y/A", render: (w) => Util.num(w.attempts ? w.passing_yards / w.attempts : null, 1) },
   { label: "Pass TD", render: (w) => w.passing_tds ?? 0 },
   { label: "INT", render: (w) => w.passing_interceptions ?? 0 },
   { label: "Rating", render: (w) => Util.num(passerRating(w.completions, w.attempts, w.passing_yards, w.passing_tds, w.passing_interceptions), 1) },
