@@ -7,6 +7,7 @@
   const params = new URLSearchParams(location.search);
   let currentGames = [];
   let modelByGameId = new Map();
+  let picksByGameId = new Map();
   let teamNames = {};
 
   function teamName(abbr) {
@@ -33,15 +34,18 @@
   async function loadSeasonGames({ defaultToCurrentWeek = false } = {}) {
     Util.showLoading(tableWrap);
     const season = seasonSelect.value;
-    const [data, model] = await Promise.all([
+    const [data, model, picks] = await Promise.all([
       Data.getGamesSeason(season),
-      // Model predictions are Phase 2/3 data -- may not exist for every
-      // season (only whatever weeks weekly_update.py has scored). Missing
-      // is normal, not an error, so don't let it break the schedule view.
+      // Model predictions and the picks log are Phase 2/3 data -- may not
+      // exist for every season (only whatever weeks weekly_update.py has
+      // scored/flagged). Missing is normal, not an error, so don't let it
+      // break the schedule view.
       Data.getModelSeason(season).catch(() => []),
+      Data.getPicksSeason(season).catch(() => []),
     ]);
     currentGames = data.games;
     modelByGameId = new Map(model.map((m) => [m.game_id, m]));
+    picksByGameId = new Map(picks.map((p) => [p.game_id, p]));
 
     const weeks = [...new Set(currentGames.map((g) => g.week))].sort((a, b) => a - b);
     const weekOptions = weeks.map((w) => {
@@ -93,6 +97,39 @@
       : `<span class="badge neutral">Under</span>`;
   }
 
+  // --- Pick-log cells (folded in from the old picks.html) --------------
+  // A game only has a picks_log row if it was flagged (|edge| >= 2.0 at the
+  // time weekly_update.py scored it) -- most games have no pick, hence the
+  // "-" fallback everywhere below.
+  function pickBetCell(g) {
+    const p = picksByGameId.get(g.game_id);
+    if (!p) return `<span class="text-faint">-</span>`;
+    return p.bet_placed === "Y"
+      ? `<span class="badge positive">Y</span>`
+      : `<span class="badge neutral">N</span>`;
+  }
+
+  function pickClosingLineCell(g) {
+    const p = picksByGameId.get(g.game_id);
+    if (!p || p.closing_line === null || p.closing_line === undefined) return `<span class="text-faint">-</span>`;
+    return Util.favoredTeamLine(p.closing_line, g.home_team, g.away_team);
+  }
+
+  function pickClvCell(g) {
+    const p = picksByGameId.get(g.game_id);
+    if (!p) return `<span class="text-faint">-</span>`;
+    return Util.signed(p.clv, 1);
+  }
+
+  function pickResultBadge(g) {
+    const p = picksByGameId.get(g.game_id);
+    if (!p) return `<span class="badge neutral">-</span>`;
+    if (p.covered === null || p.covered === undefined) return `<span class="badge neutral">Pending</span>`;
+    return p.covered
+      ? `<span class="badge positive">${Util.escapeHtml(p.side)} covered</span>`
+      : `<span class="badge negative">${Util.escapeHtml(p.side)} missed</span>`;
+  }
+
   function render() {
     let rows = currentGames.slice();
     if (weekSelect.value) rows = rows.filter((g) => String(g.week) === weekSelect.value);
@@ -121,6 +158,10 @@
             <td>${atsBadge(g)}</td>
             <td>${ouBadge(g)}</td>
             <td>${edgeBadge(g)}</td>
+            <td>${pickBetCell(g)}</td>
+            <td class="num">${pickClosingLineCell(g)}</td>
+            <td class="num">${pickClvCell(g)}</td>
+            <td>${pickResultBadge(g)}</td>
             <td>${Util.escapeHtml(Util.roofLabel(g.roof, g.stadium_id))}</td>
             <td>${Util.escapeHtml(Util.forecastLabel(g))}</td>
           </tr>
@@ -134,7 +175,9 @@
           <tr>
             <th>Wk</th><th>Type</th><th>Date</th><th>Matchup</th>
             <th class="num">Score (Away&ndash;Home)</th><th class="num">Line</th><th class="num">Total</th>
-            <th>ATS</th><th>O/U</th><th class="num">Model Edge</th><th>Roof</th><th>Forecast</th>
+            <th>ATS</th><th>O/U</th><th class="num">Model Edge</th>
+            <th>Bet</th><th class="num">Closing Line</th><th class="num">CLV</th><th>Pick Result</th>
+            <th>Roof</th><th>Forecast</th>
           </tr>
         </thead>
         <tbody>${bodyRows}</tbody>

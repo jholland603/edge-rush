@@ -82,7 +82,7 @@
         &mdash; edge favors ${Util.favoredTeamLine(model.edge, g.home_team, g.away_team)}
         ${model.p_home_covers !== null && model.p_home_covers !== undefined ? `, P(home covers) ${Util.pct(model.p_home_covers, 1)}` : ""}.
         ${model.flagged ? "This game was flagged (|edge| &ge; 2.0 pts)." : "Not flagged."}
-        <a href="picks.html">See full picks log &rarr;</a>
+        <a href="games.html?season=${g.season}&week=${g.week}">See this week's picks &amp; log &rarr;</a>
       </div>
     `;
   }

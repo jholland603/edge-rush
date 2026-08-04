@@ -1129,3 +1129,61 @@ shows full names instead of abbreviations, same reasoning.
 - Pure front-end change (`page-teams.js` + two new CSS rules in
   `style.css`) — no Worker routes touched, no redeploy needed, just push
   `site/`.
+
+## Home page decluttered, nav reordered, Model Picks folded into Games
+
+- **Home page:** removed the "Seasons of data / Teams tracked / Players
+  tracked / Data last updated" stat-cards row (Jeff flagged it directly, and
+  it also had a live bug worth knowing about even though it's now gone: "35
+  Teams tracked" — should be 32, likely stale/relocated franchise rows still
+  in the `team` dimension table inflating `index.teams.length`; moot now
+  since nothing displays that count anymore, but if a team count is ever
+  shown again elsewhere, dedupe/audit `team` first). `page-home.js` no
+  longer calls `Data.getIndex()` at all — the page is now just the "latest
+  model run" banner. Also dropped the "Model picks & log" nav-card (see
+  below) and reordered/reworded the remaining nav-cards, Games first.
+- **Nav order:** `components.js`'s `NAV_LINKS` is now Home, Games, Teams,
+  Players, Trends — Games moved ahead of Teams/Players per Jeff's ask, and
+  the standalone "Model Picks" entry is gone (folded into Games, see below).
+  `SiteFooter`'s link list updated to match (Games, Teams, Players, Trends).
+- **Model Picks folded into Games — `picks.html` deleted.** Of three options
+  presented, Jeff picked "add pick columns to Games" over keeping picks as a
+  separate tab/page. `games.html`'s schedule table gained 4 columns after
+  Model Edge: Bet, Closing Line, CLV, Pick Result — sourced from `picks_log`
+  (a game only has a row there if it was ever flagged, |edge| &ge; 2.0 pts,
+  so most rows show "-"). Pick Result specifically distinguishes three
+  states: no pick at all ("-"), flagged but not yet graded ("Pending" badge
+  — `picks_log.covered` is `NULL` until `reconcile_picks.py` runs post-game),
+  and graded (green "{side} covered" / red "{side} missed"). The page's
+  intro paragraph and a new `.banner.warn` (moved verbatim from the old
+  picks.html) carry over the "paper trading only, not calibrated" disclaimer.
+  Verified the underlying data shape directly against D1 (`picks_log` for
+  2026: 32 flagged rows, all `bet_placed='N'`, all `covered IS NULL` since
+  the season hasn't started — confirms the "-"/"Pending" paths render
+  correctly; the "graded" path isn't exercisable yet with live data but the
+  code path is the same `covered`-boolean handling already proven correct
+  elsewhere in the codebase).
+- **New Worker route:** `GET /picks/season/:season` (`getPicksSeason`,
+  mirrors `getModelSeason`'s pattern) replaces the old flat `GET /picks`
+  (`getPicksLog`) — season-scoped instead of the whole all-time log, since
+  nothing needs the unfiltered flat list anymore. `picks_log.season` is a
+  direct column (frozen at flag time), no join needed. `covered` is
+  normalized `0/1/NULL` &rarr; `true/false/null` in the response (NULL means
+  "not graded yet," must not collapse to `false`/"missed").
+- `data.js`: `getPicksLog` &rarr; `getPicksSeason(season)`. `page-games.js`
+  fetches it alongside `getModelSeason` in the same `Promise.all`, both
+  `.catch(() => [])`'d the same way (missing model/picks data for a season
+  is normal, not an error).
+- Both `game.html` (the model-prediction banner) and the home page's
+  "latest model run" banner now link to
+  `games.html?season={season}&week={week}` instead of the deleted
+  `picks.html` — that filter already existed in `page-games.js` (used for
+  the "jump to current week" behavior), just wasn't previously used as a
+  cross-page deep link target.
+- **Needs a Worker redeploy** (`wrangler deploy` from `worker/`) for
+  `/picks/season/:season` to go live — this sandbox has no wrangler
+  install/login (confirmed: `wrangler: command not found`), same limitation
+  as the original D1 bulk import. Until redeployed, the new Games columns
+  will 404 on that fetch (caught by the same `.catch(() => [])` as a missing
+  model, so the page won't break — the 4 new columns will just all show "-"
+  until the redeploy happens). Push `site/` and `worker/` together as usual.

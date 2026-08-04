@@ -17,7 +17,10 @@
  *   /model/:season/:week                -- replaces data/model/{season}-week{week}.json
  *   /model/season/:season               -- every model row for a season, keyed by game_id
  *                                           (used to overlay predicted edge on the schedule page)
- *   /picks                              -- replaces data/log/picks_log.json
+ *   /picks/season/:season                -- every picks_log row for a season, keyed by game_id
+ *                                           (used to fold the "Bet/Closing Line/CLV/Result"
+ *                                           columns into the games.html schedule table --
+ *                                           replaces the old standalone picks.html page)
  *   /game/:gameId                       -- single-game detail: the game row, its model
  *                                           prediction (if any), each team's season-to-date
  *                                           (before this game) and full-season stat totals,
@@ -122,8 +125,8 @@ export default {
         if (!week) return notFound(`no model data for ${m[1]} week ${m[2]}`);
         return json(week);
       }
-      if (path === "/picks") {
-        return json(await getPicksLog(DB));
+      if ((m = path.match(/^\/picks\/season\/(\d{4})$/))) {
+        return json(await getPicksSeason(DB, Number(m[1])));
       }
 
       if ((m = path.match(/^\/model\/season\/(\d{4})$/))) {
@@ -660,20 +663,24 @@ async function getModelWeek(DB, season, week) {
 }
 
 // ---------------------------------------------------------------------------
-// /picks -- the full picks log, mirrors data/log/picks_log.json (a flat
-// array of every flagged pick, append-only except for the outcome columns
-// reconcile_picks.py fills in once each game has been played).
+// /picks/season/:season -- every picks_log row for a season, keyed by
+// game_id, mirrors getModelSeason's shape/pattern so games.html can overlay
+// the pick-log columns (bet placed, closing line, CLV, result) onto the
+// schedule table the same way it already overlays model edge. picks_log.season
+// is a direct column (frozen at flag time), no join needed. `covered` is
+// stored as 0/1/NULL -- NULL means "not graded yet" (game hasn't been played
+// or reconcile_picks.py hasn't run), which the site should render as "-",
+// not as "did not cover" -- so it's normalized to real `null`, not `false`.
 // ---------------------------------------------------------------------------
-async function getPicksLog(DB) {
+async function getPicksSeason(DB, season) {
   const { results } = await DB.prepare(
-    `SELECT pl.logged_at, pl.season, pl.week, g.game_type_code AS game_type, pl.game_id, pl.gameday,
-            pl.home_team, pl.away_team,
-            pl.market_spread, pl.model_spread, pl.edge, pl.p_home_covers, pl.bet_placed,
-            pl.closing_line, pl.actual_result, pl.clv, pl.side, pl.covered
-     FROM picks_log pl JOIN game g ON g.game_id = pl.game_id
-     ORDER BY pl.logged_at, pl.game_id`
-  ).all();
-  return results;
+    `SELECT game_id, week, bet_placed, market_spread, model_spread, edge, p_home_covers,
+            closing_line, actual_result, clv, side, covered
+     FROM picks_log WHERE season = ?`
+  )
+    .bind(season)
+    .all();
+  return results.map((r) => ({ ...r, covered: r.covered === null ? null : !!r.covered }));
 }
 
 // ---------------------------------------------------------------------------

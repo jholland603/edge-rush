@@ -5,9 +5,13 @@ from the D1 database (`edge-rush`, id `b3234230-248f-49fa-bf7e-965ab93cea3a`)
 instead of the static `data/*.json` tree. See `site/assets/js/data.js` for
 what calls this, and `HANDOFF.md` for the full backstory.
 
-Not covered: `model/*.json` and `log/picks_log.json` (Phase 2/3 data --
-predictions and the picks log were never migrated into D1). The home page and
-picks page still read those static files directly.
+Also serves `model`/`picks_log` (Phase 2/3 data -- weekly predictions and the
+paper-trading pick log), both D1 tables now. The home page's "latest model
+run" banner reads `model` via `/model/manifest` + `/model/:season/:week`;
+the games.html schedule table reads both `model` (via `/model/season/:season`,
+the Model Edge column) and `picks_log` (via `/picks/season/:season`, the
+Bet/Closing Line/CLV/Pick Result columns) -- there's no separate picks page
+anymore, see `HANDOFF.md`.
 
 ## Deploy
 
@@ -59,6 +63,7 @@ Once deployed, sanity-check a few routes straight in the browser or via curl:
 https://edge-rush-api.<your-subdomain>.workers.dev/
 https://edge-rush-api.<your-subdomain>.workers.dev/index
 https://edge-rush-api.<your-subdomain>.workers.dev/games/2024
+https://edge-rush-api.<your-subdomain>.workers.dev/picks/season/2026
 https://edge-rush-api.<your-subdomain>.workers.dev/players/career/00-0033873
 https://edge-rush-api.<your-subdomain>.workers.dev/players/career/00-0033873?from=2020&to=2022
 ```

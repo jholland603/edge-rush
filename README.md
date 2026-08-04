@@ -36,7 +36,7 @@ edge-rush/
 │   └── model/README.md       what's in data/model, with the paper-trading disclaimer
 ├── index.json             top-level index (seasons, teams, player lookup) for the site
 └── site/                  static browsing site — reads data/ and index.json directly
-    ├── index.html, teams.html, players.html, games.html, picks.html
+    ├── index.html, teams.html, players.html, games.html (model picks/log folded in)
     └── assets/
         ├── css/style.css          shared design system
         └── js/

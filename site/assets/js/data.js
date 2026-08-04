@@ -58,7 +58,10 @@ const Data = {
 
   getModelSeason: (season) => fetchJSON(`${API_BASE}/model/season/${season}`),
 
-  getPicksLog: () => fetchJSON(`${API_BASE}/picks`),
+  // Picks-log rows for a season, keyed by game_id -- folded into the
+  // games.html schedule table (Bet/Closing Line/CLV/Result columns) instead
+  // of a standalone picks page.
+  getPicksSeason: (season) => fetchJSON(`${API_BASE}/picks/season/${season}`),
 
   getGameDetail: (gameId) => fetchJSON(`${API_BASE}/game/${encodeURIComponent(gameId)}`),
 
