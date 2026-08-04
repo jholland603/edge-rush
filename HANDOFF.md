@@ -1095,3 +1095,37 @@ shows full names instead of abbreviations, same reasoning.
   a proper draft trade chart), sum a trailing-N-year window per team per
   season, and backtest across many seasons the way the coaching-tenure
   bucket test did.
+
+## Teams page defaults to current season + shows both teams' players
+
+- **Season default + schedule fallback.** `teams.html`'s season dropdown was
+  sourced from `index.seasons.teams` (only seasons with actual `team_game`
+  stats rows), so it never offered the current season until stats existed
+  for it — as of this session, 2026 has its full 272-game schedule loaded in
+  `game` but zero `team_game` rows (season hasn't started). Switched
+  `page-teams.js`'s `loadSeasons()` to `index.seasons.games` instead (a
+  superset, includes any season with a loaded schedule) so it now defaults
+  to 2026. The team dropdown also no longer derives its options from that
+  season's stats (which would be empty for 2026) — it always lists the full
+  32-team `index.teams`.
+- `renderTeam()` now merges the selected team's scheduled games
+  (`Data.getGamesSeason`) with whatever `team_game` stats exist
+  (`Data.getTeamsSeason`), matched by `game_id`. Games with no stats yet
+  render as schedule rows (opponent, week, "-" for every stat column, no
+  Players toggle) instead of being dropped — this generalizes past just the
+  empty-season case: mid-season, a team's not-yet-played remaining games now
+  show up the same way. The 4 summary stat-cards are computed only over
+  games that do have stats; if none do, they're replaced with a one-line
+  banner ("No stats logged yet ... showing the schedule below").
+- **Players toggle now shows both teams.** Previously "Players ▸" on a
+  weekly-log row only fetched the selected team's roster
+  (`GET /game/:gameId/players/:team`). Now fetches both the selected team's
+  and the opponent's (two parallel calls, same existing route, no Worker
+  change needed) and renders them stacked — selected team first, a dashed
+  `.team-players-separator` rule, then the opponent — each under a small
+  team-name heading (`.team-players-heading`). Verified directly against the
+  deployed Worker with `2025_01_DAL_PHI`: PHI and DAL each return their own
+  correct, distinct rosters.
+- Pure front-end change (`page-teams.js` + two new CSS rules in
+  `style.css`) — no Worker routes touched, no redeploy needed, just push
+  `site/`.

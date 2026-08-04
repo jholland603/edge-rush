@@ -345,6 +345,18 @@ tr.expand-row td {
 .subtable thead th { position: static; padding: var(--space-2) var(--space-3); }
 .subtable tbody td { padding: var(--space-2) var(--space-3); }
 
+.team-players-heading {
+  margin: 0 0 var(--space-2);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+}
+.team-players-separator {
+  border-top: 1px dashed var(--color-border);
+  margin: var(--space-4) 0;
+}
+
 /* ---------------- badges / pills ---------------- */
 .badge {
   display: inline-block;
