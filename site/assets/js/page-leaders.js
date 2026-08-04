@@ -14,6 +14,7 @@
   let catalog = { players: [], teams: [] };
   let teamNames = {};
   let allSeasons = []; // ascending, filled in below once /index loads
+  const teamStatPlayersCache = new Map(); // `${team}:${stat}:${from}-${to}:${scope}` -> players array
 
   function applyCareerRange() {
     if (!allSeasons.length) return;
@@ -94,17 +95,29 @@
         return;
       }
 
+      const breakdownAvailable = isTeams && spec.id !== "points_scored";
+
       const bodyRows = rows
         .map((r, i) => {
           const rank = i + 1;
           if (isTeams) {
+            const toggleCell = breakdownAvailable
+              ? `<td><button type="button" class="expand-toggle" data-idx="${i}">Players &#9656;</button></td>`
+              : `<td></td>`;
+            const expandRow = breakdownAvailable
+              ? `<tr class="expand-row" data-idx="${i}" style="display:none;">
+                   <td colspan="5"><div class="expand-body">Loading&hellip;</div></td>
+                 </tr>`
+              : "";
             return `
               <tr>
                 <td class="num">${rank}</td>
                 <td>${Util.escapeHtml(r.team_name || r.team)}</td>
                 <td class="num">${Util.num(r.total, 0)}</td>
                 <td class="num">${r.games}</td>
-              </tr>`;
+                ${toggleCell}
+              </tr>
+              ${expandRow}`;
           }
           return `
             <tr>
@@ -118,7 +131,7 @@
         .join("");
 
       const headerCells = isTeams
-        ? `<th class="num">Rank</th><th>Team</th><th class="num">${Util.escapeHtml(spec.label)}</th><th class="num">Games</th>`
+        ? `<th class="num">Rank</th><th>Team</th><th class="num">${Util.escapeHtml(spec.label)}</th><th class="num">Games</th><th></th>`
         : `<th class="num">Rank</th><th>Player</th><th>Pos</th><th class="num">${Util.escapeHtml(spec.label)}</th><th class="num">Games</th>`;
 
       tableWrap.innerHTML = `
@@ -127,8 +140,70 @@
           <tbody>${bodyRows}</tbody>
         </table>
       `;
+
+      if (isTeams && breakdownAvailable) {
+        tableWrap.querySelectorAll(".expand-toggle").forEach((btn) => {
+          btn.addEventListener("click", () => toggleTeamExpand(btn, rows[Number(btn.dataset.idx)], spec, from, to, seasonType));
+        });
+      }
     } catch (err) {
       Util.showError(tableWrap, err);
+    }
+  }
+
+  function renderTeamPlayerBreakdown(players) {
+    if (!players.length) {
+      return `<p class="text-faint" style="margin:0;">No player-level data for this stat/range.</p>`;
+    }
+    const rows = players
+      .map(
+        (p) => `
+        <tr>
+          <td><a href="players.html?id=${encodeURIComponent(p.player_id)}">${Util.escapeHtml(p.name)}</a></td>
+          <td>${Util.escapeHtml(p.position || "-")}</td>
+          <td class="num">${Util.num(p.total, 0)}</td>
+          <td class="num">${p.games}</td>
+        </tr>`
+      )
+      .join("");
+    return `
+      <div class="subtable">
+        <table>
+          <thead><tr><th>Player</th><th>Pos</th><th class="num">Total</th><th class="num">Games</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  async function toggleTeamExpand(btn, row, spec, from, to, scope) {
+    const idx = btn.dataset.idx;
+    const expandRow = tableWrap.querySelector(`tr.expand-row[data-idx="${idx}"]`);
+    if (!expandRow) return;
+
+    const isOpen = expandRow.style.display !== "none";
+    if (isOpen) {
+      expandRow.style.display = "none";
+      btn.innerHTML = "Players &#9656;";
+      return;
+    }
+
+    expandRow.style.display = "";
+    btn.innerHTML = "Players &#9662;";
+
+    const body = expandRow.querySelector(".expand-body");
+    const key = `${row.team}:${spec.id}:${from}-${to}:${scope}`;
+    try {
+      if (!teamStatPlayersCache.has(key)) {
+        teamStatPlayersCache.set(
+          key,
+          await Data.getTeamStatPlayers({ team: row.team, stat: spec.id, from, to, scope, limit: 25 })
+        );
+      }
+      const { players } = teamStatPlayersCache.get(key);
+      body.innerHTML = renderTeamPlayerBreakdown(players);
+    } catch (err) {
+      body.innerHTML = `<p class="text-faint" style="margin:0;">Failed to load player breakdown.</p>`;
     }
   }
 

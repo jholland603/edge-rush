@@ -85,6 +85,16 @@ const Data = {
     if (scope) p.set("scope", scope);
     return fetchJSON(`${API_BASE}/leaders/teams?${p.toString()}`);
   },
+
+  // Players on `team` who contributed to that team's leaderboard total --
+  // the "show players" expand on a team-leaders row. Not available for
+  // points_scored (no single-column player equivalent); the Worker 404s.
+  getTeamStatPlayers: ({ team, stat, from, to, scope, limit }) => {
+    const p = new URLSearchParams({ stat, from, to });
+    if (limit) p.set("limit", limit);
+    if (scope) p.set("scope", scope);
+    return fetchJSON(`${API_BASE}/leaders/teams/${encodeURIComponent(team)}/players?${p.toString()}`);
+  },
 };
 
 window.Data = Data;

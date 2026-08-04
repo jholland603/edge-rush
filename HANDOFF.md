@@ -848,6 +848,33 @@ shows full names instead of abbreviations, same reasoning.
   row it belongs to), `.subtable` (tighter padding, static header -- so it
   doesn't inherit the outer table's sticky-header behavior).
 
+## Player breakdown under each team-leaders row
+
+- Same idea as the teams.html player breakdown above, applied to team
+  leaderboard rows: click "Players ▸" on a team row in leaders.html
+  (teams scope) to see which players on that team contributed to the
+  summed stat total over the currently selected year range and season
+  type. Same fairness scope (reg/post/all) as the row it's expanding.
+- Reuses the insight that every `team_game_*` category table has an
+  identically-columned `player_game_*` counterpart -- `TEAM_TO_PLAYER_TABLE`
+  maps `team_game_offense/defense/misc` to their player equivalents, so
+  `getTeamStatPlayers(DB, team, statId, from, to, scope, limit)` just
+  reuses the `TEAM_STAT_CATALOG` entry's `(table, column)` with the table
+  name swapped, filtered to one team. New route: `GET
+  /leaders/teams/:team/players?stat=&from=&to=&scope=&limit=`.
+  Single-team scope keeps it fast even over the full 1999-2025 range
+  (~150ms directly against D1, vs. ~1.4-1.6s for the unscoped
+  league-wide leaderboard queries).
+- `points_scored` is excluded -- it's a special-cased UNION query on
+  `game.home_score`/`away_score` with no single player-table column
+  behind it (scoring mixes TDs across positions plus kicking), so there's
+  no honest per-player decomposition. The Worker returns 404 for it and
+  `page-leaders.js` just doesn't render the toggle for that stat.
+- `data.js`: `getTeamStatPlayers({ team, stat, from, to, scope, limit })`.
+- `page-leaders.js`: mirrors the teams.html pattern -- paired hidden
+  `<tr class="expand-row">` under each team row, lazy-fetched and cached
+  by `${team}:${stat}:${from}-${to}:${scope}` on first expand.
+
 ## Regular season vs. playoffs: fairness fix across Leaders, Career, and Compare
 
 - The fairness problem: player/team season and career totals were silently

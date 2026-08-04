@@ -34,6 +34,11 @@
  *                                        -- top players by summed stat over a season range
  *   /leaders/teams?stat=&from=&to=&limit=
  *                                        -- top teams by summed stat over a season range
+ *   /leaders/teams/:team/players?stat=&from=&to=&scope=&limit=
+ *                                        -- players on `team` who contributed to that
+ *                                           team's stat total over the same range (the
+ *                                           "show players" expand on a team leaders row).
+ *                                           Not available for points_scored.
  *
  * model/picks_log are written by scripts/weekly_update.py and
  * scripts/reconcile_picks.py (both rewired to write D1 directly via
@@ -162,6 +167,18 @@ export default {
         if (!statId || !from || !to) return json({ error: "stat, from, and to are required" }, 400);
         const result = await getTeamLeaders(DB, statId, from, to, limit, scope);
         if (result === null) return notFound(`unknown stat ${statId}`);
+        return json(result);
+      }
+      if ((m = path.match(/^\/leaders\/teams\/([^/]+)\/players$/))) {
+        const team = decodeURIComponent(m[1]);
+        const statId = url.searchParams.get("stat");
+        const from = Number(url.searchParams.get("from"));
+        const to = Number(url.searchParams.get("to"));
+        const limit = Math.min(Number(url.searchParams.get("limit")) || 25, 100);
+        const scope = url.searchParams.get("scope");
+        if (!statId || !from || !to) return json({ error: "stat, from, and to are required" }, 400);
+        const result = await getTeamStatPlayers(DB, team, statId, from, to, scope, limit);
+        if (result === null) return notFound(`no player breakdown for stat ${statId}`);
         return json(result);
       }
 
@@ -1044,4 +1061,48 @@ async function getTeamLeaders(DB, statId, from, to, limit, scope) {
     `
   ).bind(from, to, limit).all();
   return { stat: statId, label: spec.label, from, to, scope: normalizeScope(scope), leaders: results };
+}
+
+// Every team_game_* category table has an identically-columned player_game_*
+// counterpart, so a team stat's (table, column) maps straight across --
+// used by getTeamStatPlayers below to break a team leaderboard row down into
+// the players who produced it. "points_scored" has no single-column player
+// equivalent (it's a mix of TDs across positions plus kicking), so it's
+// excluded from the catalog entries eligible for breakdown -- the route
+// returns a 404-style null for it and the UI hides the toggle.
+const TEAM_TO_PLAYER_TABLE = {
+  team_game_offense: "player_game_offense",
+  team_game_defense: "player_game_defense",
+  team_game_misc: "player_game_misc",
+};
+
+// /leaders/teams/:team/players?stat=&from=&to=&scope=&limit= -- the players
+// on `team` who contributed to that team's summed stat total over the same
+// season range/scope as the leaders table row it's expanding. Mirrors
+// getPlayerLeaders but scoped to one team instead of the whole league.
+async function getTeamStatPlayers(DB, team, statId, from, to, scope, limit) {
+  const spec = TEAM_STAT_CATALOG.find((s) => s.id === statId);
+  if (!spec || !spec.table) return null; // points_scored or unknown stat
+  const playerTable = TEAM_TO_PLAYER_TABLE[spec.table];
+  if (!playerTable) return null;
+
+  const typeFilter = scopeClause(scope, "g");
+  const { results } = await DB.prepare(
+    `
+    SELECT pg.player_id, p.display_name AS name, MAX(pg.position_code) AS position,
+           SUM(t.${spec.column}) AS total, COUNT(*) AS games
+    FROM player_game pg
+    JOIN game g ON g.game_id = pg.game_id
+    JOIN ${playerTable} t ON t.player_game_id = pg.player_game_id
+    JOIN player p ON p.player_id = pg.player_id
+    WHERE pg.team = ? AND g.season BETWEEN ? AND ? ${typeFilter}
+    GROUP BY pg.player_id
+    HAVING total IS NOT NULL AND total != 0
+    ORDER BY total DESC
+    LIMIT ?
+    `
+  )
+    .bind(team, from, to, limit)
+    .all();
+  return { stat: statId, label: spec.label, team, from, to, scope: normalizeScope(scope), players: results };
 }
