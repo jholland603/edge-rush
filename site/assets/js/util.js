@@ -108,6 +108,30 @@ const Util = {
     return Util.PLAYOFF_ROUND_LABELS[gameType] || String(week);
   },
 
+  /**
+   * The "current" week within a season's games list: the first week whose
+   * games haven't all been played yet (by gameday), so mid-season this is
+   * whichever week is in progress or coming up next. Before the season's
+   * first game (e.g. during the offseason, once next year's schedule is
+   * loaded), that's week 1 -- no games have a gameday in the past yet, so
+   * the very first week qualifies. After the season's last game, falls back
+   * to the final week (e.g. the Super Bowl week stays "current" until a new
+   * season's games exist). Returns null for an empty games list. Used to
+   * default the games-page week filter instead of "All weeks".
+   */
+  currentWeek(games) {
+    if (!games.length) return null;
+    const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD", UTC
+    const weeks = [...new Set(games.map((g) => g.week))].sort((a, b) => a - b);
+    for (const w of weeks) {
+      const lastGameday = games
+        .filter((g) => g.week === w)
+        .reduce((max, g) => (g.gameday > max ? g.gameday : max), "");
+      if (lastGameday >= today) return w;
+    }
+    return weeks[weeks.length - 1];
+  },
+
   formatDate(dateStr) {
     if (!dateStr) return "-";
     const d = new Date(`${dateStr}T00:00:00`);

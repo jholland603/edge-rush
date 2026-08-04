@@ -30,7 +30,7 @@
     seasonSelect.value = seasons.includes(wanted) ? String(wanted) : String(seasons[0]);
   }
 
-  async function loadSeasonGames() {
+  async function loadSeasonGames({ defaultToCurrentWeek = false } = {}) {
     Util.showLoading(tableWrap);
     const season = seasonSelect.value;
     const [data, model] = await Promise.all([
@@ -50,7 +50,19 @@
     });
     Util.fillSelect(weekSelect, weekOptions, { placeholder: "All weeks" });
     const wanted = params.get("week");
-    weekSelect.value = weeks.map(String).includes(wanted) ? wanted : "";
+    if (weeks.map(String).includes(wanted)) {
+      weekSelect.value = wanted;
+    } else if (defaultToCurrentWeek) {
+      // Only on the page's first load with no explicit week/season params --
+      // land on whatever week is current instead of the full "All weeks"
+      // list. Switching seasons by hand afterward goes back to "All weeks"
+      // (browsing a whole past season is more useful than pinning it to
+      // whatever week happens to be "current" today).
+      const cw = Util.currentWeek(currentGames);
+      weekSelect.value = cw !== null && weeks.includes(cw) ? String(cw) : "";
+    } else {
+      weekSelect.value = "";
+    }
   }
 
   function edgeBadge(g) {
@@ -154,7 +166,9 @@
   try {
     await loadSeasons();
     if (params.get("team")) teamFilter.value = params.get("team").toUpperCase();
-    await loadSeasonGames();
+    // Default to the current week only when the URL didn't already ask for a
+    // specific season -- if it did, respect the season default logic above.
+    await loadSeasonGames({ defaultToCurrentWeek: !params.get("season") });
     render();
     syncUrl();
   } catch (err) {

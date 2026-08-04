@@ -103,7 +103,7 @@
           if (isTeams) {
             const toggleCell = breakdownAvailable
               ? `<td><button type="button" class="expand-toggle" data-idx="${i}">Players &#9656;</button></td>`
-              : `<td></td>`;
+              : `<td class="text-faint" title="No single player-level stat maps to Points Scored (it's a mix of TDs across positions plus kicking)">&ndash;</td>`;
             const expandRow = breakdownAvailable
               ? `<tr class="expand-row" data-idx="${i}" style="display:none;">
                    <td colspan="5"><div class="expand-body">Loading&hellip;</div></td>
@@ -257,10 +257,15 @@
     scopeSelect.value = wantedScope === "teams" ? "teams" : "players";
     populateStatSelect();
 
+    // Default to the current season only (not the full 1999-present history)
+    // unless the URL says otherwise -- "Leaders" landing on 26 years of
+    // combined totals isn't a useful first view. Full history is still one
+    // click away via the "Career" checkbox below.
+    const currentSeason = seasons[seasons.length - 1];
     const wantedFrom = Number(params.get("from"));
     const wantedTo = Number(params.get("to"));
-    fromSelect.value = seasons.includes(wantedFrom) ? String(wantedFrom) : String(seasons[0]);
-    toSelect.value = seasons.includes(wantedTo) ? String(wantedTo) : String(seasons[seasons.length - 1]);
+    fromSelect.value = seasons.includes(wantedFrom) ? String(wantedFrom) : String(currentSeason);
+    toSelect.value = seasons.includes(wantedTo) ? String(wantedTo) : String(currentSeason);
 
     if (params.get("career") === "1") {
       careerToggle.checked = true;

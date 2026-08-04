@@ -848,6 +848,70 @@ shows full names instead of abbreviations, same reasoning.
   row it belongs to), `.subtable` (tighter padding, static header -- so it
   doesn't inherit the outer table's sticky-header behavior).
 
+## Responsive hamburger nav + leaders.html fixes
+
+- **Hamburger nav for narrow screens.** The header nav (`components.js`
+  `SiteHeader`) was just `flex-wrap`, so on a phone the six links wrapped
+  into two or three cluttered rows under the logo. Kept the horizontal bar
+  exactly as-is on desktop (that pattern's fine, it wasn't the problem) and
+  only below 768px it now collapses behind a hamburger button that toggles
+  `.site-header__nav`'s `.is-open` class (plain CSS `display: none` /
+  `flex`, no JS framework). The three bars morph into an X via
+  `aria-expanded` + CSS transforms rather than swapping icons. Pure
+  front-end, no Worker involvement.
+- **Team-leaders "Players" toggle looked missing.** Root cause: switching
+  the Leaders scope to "Teams" defaults the stat dropdown to whatever's
+  first in `TEAM_STAT_CATALOG`, which is Points Scored -- the one stat with
+  no player breakdown (see the earlier section on this feature). The toggle
+  cell was rendering as a bare empty `<td>` for that case, which reads as
+  "the feature's broken" rather than "not applicable here." Now renders a
+  faint "–" with a `title` tooltip explaining why.
+- **Leaders defaults to the current season, not full history.** Landing on
+  26 years of combined totals wasn't a useful first view. From/To now both
+  default to the most recent season in `index.seasons.games` (same "current
+  season" concept as the games.html season default) unless the URL says
+  otherwise. Full history is still one click away via the existing "Career"
+  checkbox.
+- **Investigated but could not reproduce:** a report that the teams.html
+  player breakdown shows the opponent's roster instead of the selected
+  team's. Tested live (KC week 1 vs LAC, PHI week 2 @ KC, and the page's
+  bare default load) via browser automation -- all three showed the
+  correct team's players with stats matching the row's totals exactly. No
+  swap found in `getGameTeamPlayers`'s SQL, the route's param order, or
+  `page-teams.js`'s `toggleExpand`. Left as-is pending a reproducible
+  example (specific team/season/week) since nothing here should be changed
+  blind.
+
+## games.html week dropdown defaults to the current week
+
+- New `Util.currentWeek(games)`: first week whose games haven't all been
+  played yet (by `gameday`, "YYYY-MM-DD" string compare against today in
+  UTC), else the season's last week if every game's already happened.
+  Handles the pre-season case correctly -- once next year's schedule rows
+  exist (`gameday`s all in the future), week 1 is the first "not fully
+  played" week, so it's picked automatically without a special case.
+- `page-games.js` only applies this on the page's bare first load (no
+  `season`/`week` in the URL at all) -- see `defaultToCurrentWeek` param on
+  `loadSeasonGames`. Manually switching seasons afterward still resets to
+  "All weeks," since pinning a past season you're intentionally browsing to
+  whatever week happens to be "current" today isn't useful.
+- Pure front-end change, no Worker involvement -- just push `site/`.
+
+## Rebrand: "NFL Model" -> "Edge Rush"
+
+- Renamed everywhere it was user-visible: the header brand (`components.js`
+  `SiteHeader`, now `Edge<span>Rush</span>`) and every page's `<title>`
+  (`Edge Rush &mdash; {page}`).
+- Added `site/assets/favicon.svg` -- a simple double-chevron mark in the
+  site's existing accent green (`#4fd1a5`) on the dark background color
+  (`#0f1720`), reusing the design tokens already in `style.css` rather than
+  inventing new colors. Linked via `<link rel="icon" type="image/svg+xml"
+  href="assets/favicon.svg">` in every page's `<head>`, and reused as the
+  small mark next to the brand text in the header itself so the tab icon
+  and the in-page logo match.
+- Pure front-end change (new static asset + HTML/CSS/JS edits only, no
+  Worker routes touched) -- just push `site/`, no `wrangler deploy` needed.
+
 ## Player breakdown under each team-leaders row
 
 - Same idea as the teams.html player breakdown above, applied to team
