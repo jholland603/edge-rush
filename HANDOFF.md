@@ -1187,3 +1187,66 @@ shows full names instead of abbreviations, same reasoning.
   will 404 on that fetch (caught by the same `.catch(() => [])` as a missing
   model, so the page won't break — the 4 new columns will just all show "-"
   until the redeploy happens). Push `site/` and `worker/` together as usual.
+
+## "Current season" defaults, made consistent across the site (pure front-end)
+
+- Discussed with Jeff and landed on one rule: **only `games.html` is allowed
+  to default to the newest *scheduled* season** (since showing future
+  odds/schedule is the point of that page). Every other page should default
+  to the newest season with real *stats*, not just a loaded schedule. This
+  surfaced two real bugs, both the same shape:
+  - `teams.html` (from the schedule-fallback work earlier this session) was
+    defaulting to 2026 — a season with a full schedule but zero `team_game`
+    stats rows. Fixed in `page-teams.js`'s `loadSeasons()`: the dropdown's
+    *option list* still comes from `index.seasons.games` (2026 stays
+    manually selectable, so the schedule-preview feature still works if you
+    deliberately pick it), but the *default selected value* now comes from
+    `Math.max(...index.seasons.teams)` (2025 today).
+  - `leaders.html` had the identical bug, independently — its "current
+    season" default also used `index.seasons.games`. Fixed the same way in
+    `page-leaders.js`, but scope-aware: a new `currentSeasonForScope(scope)`
+    picks off `teamStatsSeasons` (`index.seasons.teams`) or
+    `playerStatsSeasons` (`index.seasons.players`) depending on which scope
+    is active when the page loads. From/to option lists are untouched (still
+    the full `index.seasons.games` range, so browsing ahead to 2026
+    manually still works).
+  - Verified directly against D1: `MAX(team_game.season) = 2025`,
+    `MAX(player_game.season) = 2025`, `MAX(game.season) = 2026` — confirms
+    both fixes land on 2025 today and will self-advance to 2026 the first
+    week real stats exist for it, no manual update needed either time.
+  - `compare.html` was already correct — it has no single-season default at
+    all (career-range based) and its year selects were already sourced from
+    `index.seasons.players`.
+- **`players.html` no longer has a bare "search above" dead end.** Landing
+  with no `?id=` now renders `renderLanding()` in `page-players.js`: 6
+  curated top-5 mini leaderboards (Passing/Rushing/Receiving Yards, Sacks,
+  Interceptions (Defense), Solo Tackles) for the newest season with real
+  player stats (`index.seasons.players`, same 2025-today/auto-2026-later
+  logic as above). Deliberately a curated glance, not a full `leaders.html`
+  clone — labels come from `Data.getLeadersCatalog()` (not hardcoded, same
+  philosophy as `leaders.html` itself), and every card links through to the
+  full leaderboard (`leaders.html?scope=players&stat=X&from=Y&to=Y`) for
+  anyone who wants the real thing (position filter, year range, career
+  totals). All 6 stat ids already existed in the Worker's
+  `PLAYER_STAT_CATALOG` — no backend changes needed. Verified 2 of the 6
+  (`def_tackles_solo`, `def_interceptions`) directly against the deployed
+  Worker, real 2025 leaders came back correctly.
+- **Compare's entry point moved off a buried inline link.** The old
+  "Compare multiple players → · See stat leaders →" sentence crammed into
+  `players.html`'s header paragraph is gone — the "stat leaders" half is now
+  moot (leaders content is the default landing view itself). Compare got a
+  real button instead: `players.html`'s page-header is now a
+  `.page-header--split` flex row (title+description left, a new `.btn`-styled
+  "Compare players →" link right). `.btn` is a small reusable secondary-button
+  style (bg-card, bordered, accent on hover) — first use of a real button
+  component on this site, available for reuse elsewhere later. The home
+  page's "Compare players" nav-card is untouched (still the second, more
+  discoverable entry point).
+- New CSS: `.page-header--split`, `.btn`, `.leaders-grid` (wider min-column
+  than the default `.card-grid`, 280px vs 220px, since each card holds a
+  4-column mini-table), `.leaders-card h3` (same "real heading, not the tiny
+  uppercase default" override pattern `.nav-card h3` already uses).
+- Pure front-end change (`page-teams.js`, `page-leaders.js`,
+  `page-players.js`, `players.html`, `style.css`) — no Worker routes
+  touched, no redeploy needed for this part specifically (independent of
+  the `/picks/season` redeploy noted above), just push `site/`.

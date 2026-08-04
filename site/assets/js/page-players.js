@@ -13,6 +13,75 @@
 
   const { groupFor, CAREER_STAT_GROUPS, statCardValue, WEEK_COLUMNS, FALLBACK_WEEK_COLUMNS } = PlayerStats;
 
+  // Landing-page mini leaderboards, shown when no player is selected yet
+  // (instead of a bare "search above" message). Deliberately a curated
+  // handful, not a full leaders.html clone -- this is meant to be a glance,
+  // not a destination. All 6 ids already exist in the Worker's player stat
+  // catalog, so no backend changes were needed for this.
+  const LANDING_STAT_IDS = [
+    "passing_yards",
+    "rushing_yards",
+    "receiving_yards",
+    "def_sacks",
+    "def_interceptions",
+    "def_tackles_solo",
+  ];
+
+  async function renderLanding(season) {
+    detailEl.innerHTML = `<div class="loading">Loading leaders&hellip;</div>`;
+    try {
+      const catalog = await Data.getLeadersCatalog();
+      const labelById = new Map(catalog.players.map((s) => [s.id, s.label]));
+
+      const results = await Promise.all(
+        LANDING_STAT_IDS.map((id) =>
+          Data.getPlayerLeaders({ stat: id, from: season, to: season, limit: 5, scope: "reg" }).catch(() => null)
+        )
+      );
+
+      const cards = LANDING_STAT_IDS.map((id, i) => {
+        const label = labelById.get(id) || id;
+        const leaders = (results[i] && results[i].leaders) || [];
+        const rows = leaders.length
+          ? leaders
+              .map(
+                (r, rank) => `
+                <tr>
+                  <td class="num">${rank + 1}</td>
+                  <td><a href="players.html?id=${encodeURIComponent(r.player_id)}">${Util.escapeHtml(r.name)}</a></td>
+                  <td>${Util.escapeHtml(r.position || "-")}</td>
+                  <td class="num">${Util.num(r.total, 0)}</td>
+                </tr>`
+              )
+              .join("")
+          : `<tr><td colspan="4" class="text-faint">No games yet.</td></tr>`;
+
+        return `
+          <div class="card leaders-card">
+            <h3>${Util.escapeHtml(label)}</h3>
+            <div class="subtable">
+              <table>
+                <thead><tr><th class="num">#</th><th>Player</th><th>Pos</th><th class="num">${Util.escapeHtml(label)}</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+            <a href="leaders.html?scope=players&stat=${encodeURIComponent(id)}&from=${season}&to=${season}">Full leaderboard &rarr;</a>
+          </div>
+        `;
+      }).join("");
+
+      detailEl.innerHTML = `
+        <div class="section-intro">
+          Top players for the ${season} season (regular season). Search above for anyone specific, or
+          <a href="leaders.html?scope=players&from=${season}&to=${season}">browse the full leaderboard &amp; team stats &rarr;</a>
+        </div>
+        <div class="card-grid leaders-grid">${cards}</div>
+      `;
+    } catch (err) {
+      Util.showError(detailEl, err);
+    }
+  }
+
   function renderResults(query) {
     if (!query || query.length < 2) {
       resultsEl.innerHTML = "";
@@ -212,6 +281,16 @@
     if (wantedId && playersIndex[wantedId]) {
       searchInput.value = playersIndex[wantedId].name;
       selectPlayer(wantedId);
+    } else {
+      // No player picked yet -- land on top-5 mini leaderboards instead of a
+      // bare "search above" message. "Current season" here means the newest
+      // season with real player stats, not just the newest scheduled one
+      // (that's games.html's job) -- so this correctly shows 2025 today and
+      // will auto-advance to 2026 the first week real stats exist for it.
+      const playerSeasons = index.seasons.players || [];
+      if (playerSeasons.length) {
+        renderLanding(Math.max(...playerSeasons));
+      }
     }
   } catch (err) {
     Util.showError(detailEl, err);

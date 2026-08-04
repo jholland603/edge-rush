@@ -26,15 +26,20 @@
     const index = await Data.getIndex();
     teamNames = index.team_names || {};
     allTeamAbbrs = [...(index.teams || [])].sort();
-    // Use the `games` (schedule) season list, not `teams` (stats) -- the
-    // schedule includes the current/future season as soon as it's loaded,
-    // even before any games have been played and stats exist. That's what
-    // lets this page default to the current season and fall back to a bare
-    // schedule view below.
+    // The dropdown *options* still come from `games` (schedule) -- a season
+    // with no stats yet (like 2026 right now) should stay pickable, since
+    // that's what lets someone deliberately browse ahead to the bare
+    // schedule view below. But the *default* selection should be the newest
+    // season with real stats, not just the newest scheduled one -- only
+    // games.html is meant to default to "current/future," per Jeff. This
+    // auto-advances to 2026 on its own the first week team_game rows exist
+    // for it, no manual update needed.
     const seasons = [...index.seasons.games].sort((a, b) => b - a);
     Util.fillSelect(seasonSelect, seasons);
+    const statsSeasons = index.seasons.teams || [];
+    const defaultSeason = statsSeasons.length ? Math.max(...statsSeasons) : seasons[0];
     const wanted = Number(params.get("season"));
-    seasonSelect.value = seasons.includes(wanted) ? String(wanted) : String(seasons[0]);
+    seasonSelect.value = seasons.includes(wanted) ? String(wanted) : String(defaultSeason);
   }
 
   async function loadTeamsForSeason() {

@@ -13,8 +13,20 @@
   const params = new URLSearchParams(location.search);
   let catalog = { players: [], teams: [] };
   let teamNames = {};
-  let allSeasons = []; // ascending, filled in below once /index loads
+  let allSeasons = []; // ascending, every season with a schedule -- for the from/to option lists + "Career" full range
+  let playerStatsSeasons = []; // seasons with real player_game stats
+  let teamStatsSeasons = []; // seasons with real team_game stats
   const teamStatPlayersCache = new Map(); // `${team}:${stat}:${from}-${to}:${scope}` -> players array
+
+  // Newest season with real stats for the given scope -- NOT just the
+  // newest scheduled season (that's `allSeasons`'s job, e.g. 2026 already
+  // has a schedule loaded with zero stats). Only games.html is meant to
+  // default to "current/future"; every other page defaults to the newest
+  // season that actually has data, per Jeff.
+  function currentSeasonForScope(scope) {
+    const list = scope === "teams" ? teamStatsSeasons : playerStatsSeasons;
+    return list.length ? Math.max(...list) : allSeasons[allSeasons.length - 1];
+  }
 
   function applyCareerRange() {
     if (!allSeasons.length) return;
@@ -249,6 +261,8 @@
 
     const seasons = [...index.seasons.games].sort((a, b) => a - b);
     allSeasons = seasons;
+    playerStatsSeasons = index.seasons.players || [];
+    teamStatsSeasons = index.seasons.teams || [];
     const seasonsDesc = [...seasons].sort((a, b) => b - a);
     Util.fillSelect(fromSelect, seasonsDesc);
     Util.fillSelect(toSelect, seasonsDesc);
@@ -260,8 +274,10 @@
     // Default to the current season only (not the full 1999-present history)
     // unless the URL says otherwise -- "Leaders" landing on 26 years of
     // combined totals isn't a useful first view. Full history is still one
-    // click away via the "Career" checkbox below.
-    const currentSeason = seasons[seasons.length - 1];
+    // click away via the "Career" checkbox below. "Current" means newest
+    // season with real stats for whichever scope is selected, not just
+    // newest scheduled season (see currentSeasonForScope above).
+    const currentSeason = currentSeasonForScope(scopeSelect.value);
     const wantedFrom = Number(params.get("from"));
     const wantedTo = Number(params.get("to"));
     fromSelect.value = seasons.includes(wantedFrom) ? String(wantedFrom) : String(currentSeason);
