@@ -32,6 +32,17 @@
  *   /trends                             -- situational ATS trends (home dogs by size,
  *                                           rest-advantage buckets, divisional vs. not),
  *                                           full 1999-present history, used by trends.html
+ *   /signals/:season/:week              -- per-game "which team does each tested signal
+ *                                           favor" scoreboard for one week: the EPA model's
+ *                                           pick (vs. market) and the big-home-dog rule (the
+ *                                           only standalone situational trend that's actually
+ *                                           tested out as real -- see HANDOFF.md), plus a
+ *                                           plain-language agree/conflict/single-signal
+ *                                           verdict per game. Deliberately does NOT include
+ *                                           fatigue (tested, no signal) or expert consensus
+ *                                           (not backtestable, no data source connected) --
+ *                                           only shows signals that have actually been
+ *                                           tested and hold up. Used by signals.html.
  *   /trends/query?role=&side=&divisional=&month=&season_from=&season_to=
  *                &min_points=&max_points=&prior_result=&prior_min_margin=
  *                                        -- free-form ATS backtest: pick a role
@@ -157,6 +168,11 @@ export default {
 
       if (path === "/trends") {
         return json(await getTrends(DB));
+      }
+      if ((m = path.match(/^\/signals\/(\d{4})\/(\d{1,2})$/))) {
+        const week = await getWeekSignals(DB, Number(m[1]), Number(m[2]));
+        if (!week) return notFound(`no signals for ${m[1]} week ${m[2]}`);
+        return json(week);
       }
       if (path === "/trends/query") {
         const result = await getTrendsQuery(DB, url.searchParams);
@@ -728,6 +744,83 @@ async function getModelWeek(DB, season, week) {
       flagged: !!r.flagged,
       market_total: r.market_total,
     })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// /signals/:season/:week -- per-game scoreboard of which team each TESTED
+// signal favors. Only two signals currently qualify:
+//   1. The EPA model's pick vs. the market (model.edge, already computed by
+//      weekly_update.py) -- side = home if edge > 0, away if edge < 0.
+//   2. The "big home dog" rule (market_spread <= -7, i.e. home team getting
+//      7+ points) -- tested in HANDOFF.md ("Task #27 tested"), covers
+//      54-56% ATS across two different historical samples, but NOT folded
+//      into the model itself (doing so made the model's own picks worse --
+//      see HANDOFF.md). Treated here as its own independent, standalone
+//      signal, exactly as that finding recommended.
+// Fatigue and expert consensus are deliberately absent -- fatigue tested
+// with no signal, expert consensus has no historical backtest and isn't
+// wired up as a data source at all. Showing them here would misrepresent
+// untested/negative findings as if they were "which team this favors."
+// ---------------------------------------------------------------------------
+async function getWeekSignals(DB, season, week) {
+  const { results } = await DB.prepare(
+    `SELECT m.game_id, m.matchup, g.home_team, g.away_team, g.gameday,
+            m.market_spread, m.model_spread, m.edge, m.flagged, m.updated
+     FROM model m JOIN game g ON g.game_id = m.game_id
+     WHERE m.season = ? AND m.week = ? ORDER BY g.gameday, m.game_id`
+  )
+    .bind(season, week)
+    .all();
+  if (!results.length) return null;
+
+  const games = results.map((r) => {
+    const modelSide = r.edge > 0 ? "home" : r.edge < 0 ? "away" : null;
+    const bigHomeDogApplies = r.market_spread !== null && r.market_spread <= -7;
+    const bigHomeDogSide = bigHomeDogApplies ? "home" : null;
+
+    let agreement;
+    if (modelSide && bigHomeDogSide) {
+      agreement = modelSide === bigHomeDogSide ? "agree" : "conflict";
+    } else if (modelSide) {
+      agreement = "model_only";
+    } else if (bigHomeDogSide) {
+      agreement = "trend_only";
+    } else {
+      agreement = "none";
+    }
+
+    return {
+      game_id: r.game_id,
+      matchup: r.matchup,
+      home_team: r.home_team,
+      away_team: r.away_team,
+      gameday: r.gameday,
+      market_spread: r.market_spread,
+      model: {
+        model_spread: r.model_spread,
+        edge: r.edge,
+        side: modelSide,
+        flagged: !!r.flagged,
+      },
+      big_home_dog: {
+        applies: bigHomeDogApplies,
+        side: bigHomeDogSide,
+      },
+      agreement,
+    };
+  });
+
+  return {
+    season,
+    week,
+    updated: results[0].updated,
+    disclaimer:
+      "PAPER TRADING ONLY. The EPA model's confidence is not reliably calibrated. " +
+      "The big-home-dog rule is a real historical trend not yet integrated into the " +
+      "model (naively adding it made the model's own picks worse -- see HANDOFF.md). " +
+      "Nothing here is a recommendation.",
+    games,
   };
 }
 

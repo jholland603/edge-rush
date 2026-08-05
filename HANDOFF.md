@@ -1380,3 +1380,47 @@ exact slice, computed live off `game` — no new tables, no pre-baked buckets.
   every other Worker-side change this project makes) before `/trends/query`
   is live — the site-side pieces (`trends.html`/`page-trends.js`/
   `data.js`/`style.css`) just need `site/` pushed, no build step.
+
+## Signals page — per-game "which team does each tested signal favor" scoreboard
+
+Jeff's ask, after seeing the model/CLV/trend/fatigue work above: rather than
+one blended pick, show each *tested* signal side by side for a given week's
+games and say plainly which team it favors. Two things got corrected before
+building this (see chat): CLV isn't a pre-game signal at all (it only exists
+after a game closes), and expert consensus isn't wired up as a data source
+and can't be backtested — so neither belongs on a "which team does this
+favor" page. Jeff agreed: skip expert consensus for now, build a live site
+page rather than a one-off doc.
+
+- **New Worker route** `GET /signals/:season/:week` (`getWeekSignals` in
+  `worker/src/index.js`, right after `getModelWeek`). Only two signals
+  qualify as actually tested: (1) the EPA model's pick vs. market
+  (`model.edge` — side = home if positive, away if negative, `flagged` =
+  clears the model's own 2.0-pt threshold vs. just a directional lean), and
+  (2) the big-home-dog rule (`market_spread <= -7`), tracked as its own
+  independent signal per the Task #27 finding right above this — deliberately
+  **not** blended into the model's own pick. Each game gets an `agreement`
+  field (`agree`/`conflict`/`model_only`/`trend_only`/`none`) so the site
+  doesn't have to re-derive the comparison. Fatigue and expert consensus are
+  absent on purpose — showing a tested-negative or untested finding as if it
+  "favors" a team would misrepresent both.
+- Verified against real live data: pulled Week 1 2026's 16 games directly
+  from `model`/`game` via the D1 MCP tool, fed them through the route logic
+  with a mocked D1 binding (`node`, not committed) — confirmed correct
+  side/flagged/agreement output, including a synthetic big-home-dog game to
+  exercise the `agree` branch (none of Week 1 2026's real games happen to be
+  big home dogs — market spreads that week top out at 11.5, all favorites,
+  not underdogs by 7+ — so the real Week 1 table will show every game as
+  `model_only` until a future week actually has one; that's correct
+  behavior, not a bug).
+- **New page** `signals.html` + `page-signals.js`, added to nav/footer
+  (`components.js`). Season/week selectors sourced from
+  `Data.getModelManifest()` (only weeks `weekly_update.py` has actually
+  scored show up), defaults to the earliest available week rather than
+  `manifest.latest` (unlike the home-page banner) since this page is framed
+  around "what does this week look like," not "most recent run." A
+  "What each signal means" section under the table spells out exactly how
+  each one was tested and why fatigue/expert-consensus are excluded,
+  directly in the UI, not just in this file.
+- **Needs a Worker redeploy** for `/signals/:season/:week` to go live, same
+  as `/trends/query` above — `site/` push is enough for the page itself.

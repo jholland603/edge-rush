@@ -8,6 +8,7 @@
 const NAV_LINKS = [
   { key: "home", label: "Home", href: "index.html" },
   { key: "games", label: "Games", href: "games.html" },
+  { key: "signals", label: "Signals", href: "signals.html" },
   { key: "teams", label: "Teams", href: "teams.html" },
   { key: "players", label: "Players", href: "players.html" },
   { key: "trends", label: "Trends", href: "trends.html" },
@@ -55,6 +56,7 @@ class SiteFooter extends HTMLElement {
         <div>&copy; ${year} &middot; Personal handicapping model &middot; not for public distribution</div>
         <div class="site-footer__links">
           <a href="games.html">Games</a>
+          <a href="signals.html">Signals</a>
           <a href="teams.html">Teams</a>
           <a href="players.html">Players</a>
           <a href="trends.html">Trends</a>

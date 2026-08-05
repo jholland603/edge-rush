@@ -72,6 +72,8 @@ const Data = {
 
   getTrends: () => fetchJSON(`${API_BASE}/trends`),
 
+  getWeekSignals: (season, week) => fetchJSON(`${API_BASE}/signals/${season}/${week}`),
+
   // Free-form historical trend query -- not cached (each filter combination
   // is effectively a unique query, caching would just grow _cache forever
   // for no benefit since nobody re-runs the exact same filter set twice in
