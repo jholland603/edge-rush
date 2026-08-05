@@ -210,7 +210,12 @@ async function getIndex(DB) {
     // Single pass over player_game+game for "most recent position" (window
     // function, not a per-player correlated subquery -- with 11,366 players
     // that would be 11,366 separate scans instead of one) and a second pass
-    // for the distinct-seasons list, joined together at the end.
+    // for the distinct-seasons list, joined together at the end. LEFT JOINed
+    // (not INNER) against `player` so historical players who exist purely via
+    // player_career_override -- zero player_game rows, e.g. a pre-1999
+    // retiree -- still show up in search instead of silently vanishing from
+    // the index. Their position (when known) and career_span come from the
+    // override table instead.
     DB.prepare(
       `
       WITH ranked AS (
@@ -222,11 +227,20 @@ async function getIndex(DB) {
         SELECT pg.player_id, GROUP_CONCAT(DISTINCT g.season) AS seasons_csv
         FROM player_game pg JOIN game g ON g.game_id = pg.game_id
         GROUP BY pg.player_id
+      ),
+      overrides AS (
+        SELECT player_id, MAX(career_span) AS career_span, MAX(position) AS position
+        FROM player_career_override
+        GROUP BY player_id
       )
-      SELECT p.player_id, p.display_name AS name, r.position_code AS position, s.seasons_csv
+      SELECT p.player_id, p.display_name AS name,
+             COALESCE(r.position_code, o.position) AS position,
+             s.seasons_csv, o.career_span
       FROM player p
-      JOIN seasons s ON s.player_id = p.player_id
+      LEFT JOIN seasons s ON s.player_id = p.player_id
       LEFT JOIN ranked r ON r.player_id = p.player_id AND r.rn = 1
+      LEFT JOIN overrides o ON o.player_id = p.player_id
+      WHERE s.player_id IS NOT NULL OR o.player_id IS NOT NULL
       `
     ).all(),
   ]);
@@ -239,6 +253,7 @@ async function getIndex(DB) {
       seasons: row.seasons_csv
         ? row.seasons_csv.split(",").map(Number).sort((a, b) => a - b)
         : [],
+      career_span: row.career_span || null,
     };
   }
 
@@ -483,6 +498,19 @@ async function getPlayerCareer(DB, playerId, from, to, scope) {
     .first();
   if (!player) return null;
 
+  // player_career_override holds true full-career totals for historical
+  // players whose careers predate (or partly predate) our 1999-2026 D1
+  // coverage. Same rule as /leaders/players: only merge these in when the
+  // requested range spans the DB's whole season coverage -- they're
+  // full-career numbers, not season-sliceable. A player who exists purely
+  // via override (no player_game rows at all, e.g. a pre-1999 retiree) would
+  // otherwise 404 below once `seasons.length` comes back empty.
+  const bounds = await DB.prepare(`SELECT MIN(season_year) AS min_s, MAX(season_year) AS max_s FROM season`).first();
+  const isCareerRange = bounds && fromY <= bounds.min_s && toY >= bounds.max_s;
+  const overrideRows = isCareerRange
+    ? (await DB.prepare(`SELECT stat, value, career_span, source, position FROM player_career_override WHERE player_id = ?`).bind(playerId).all()).results
+    : [];
+
   const [offense, defense, special, misc, teamsRows, seasonsRows, posRow, gamesRow] = await Promise.all([
     DB.prepare(
       `
@@ -581,7 +609,12 @@ async function getPlayerCareer(DB, playerId, from, to, scope) {
   ]);
 
   const seasons = seasonsRows.results.map((r) => r.season);
-  if (!seasons.length) return null; // player exists in the dimension table but has no games in this range/scope
+  // A player exists in the dimension table but has zero games in this
+  // range/scope. That used to always mean "no data, 404" -- but a historical
+  // player who's purely override-sourced (career entirely pre-1999) will
+  // always land here, since they have no player_game rows at all. Only 404
+  // if there's also no override data to fall back on.
+  if (!seasons.length && !overrideRows.length) return null;
 
   const career_totals = { ...offense, ...defense, ...special, ...misc };
   for (const k of Object.keys(career_totals)) {
@@ -592,16 +625,34 @@ async function getPlayerCareer(DB, playerId, from, to, scope) {
     if (career_totals[k] === null) career_totals[k] = 0;
   }
 
+  let career_span = null;
+  let historical_source = null;
+  for (const row of overrideRows) {
+    // Override wins over the game-summed figure -- it's the sourced true
+    // career number, while the summed value (if any) is necessarily partial
+    // for a GAP player (missing whatever seasons fall outside 1999-2026).
+    career_totals[row.stat] = row.value;
+    if (row.career_span && !career_span) career_span = row.career_span;
+    if (row.source && !historical_source) historical_source = row.source;
+  }
+
   return {
     player_id: playerId,
     player_display_name: player.display_name,
-    position: posRow ? posRow.position_code : null,
+    position: posRow ? posRow.position_code : overrideRows.length && overrideRows[0].position ? overrideRows[0].position : null,
     teams: teamsRows.results.map((r) => r.team),
     seasons,
-    games_played: gamesRow.n,
+    // Once any override applies, games_played/seasons (whatever partial
+    // in-DB games this player happens to have, e.g. Favre's 1999-2010 rows
+    // out of his full 1991-2010 career) would misleadingly pair a full-career
+    // total with a partial game count -- null it out so the front end shows
+    // the sourced career_span instead.
+    games_played: seasons.length && !overrideRows.length ? gamesRow.n : null,
     scope: normalizeScope(scope),
     updated: new Date().toISOString(),
     career_totals,
+    career_span,
+    historical_source,
   };
 }
 
@@ -1010,20 +1061,68 @@ async function getPlayerLeaders(DB, statId, from, to, position, limit, scope) {
   // worth it for a display-only field.
   const posFilter = position ? "AND pg.position_code = ?" : "";
   const typeFilter = scopeClause(scope, "g");
+
+  // player_career_override holds true full-career totals for historical
+  // players whose careers predate (or partly predate) our 1999-2026 D1
+  // coverage -- game-by-game data simply doesn't exist for those seasons.
+  // These are full-career numbers, not season-sliceable, so they only get
+  // merged in when the requested range spans every season we have (i.e. the
+  // "Career" view). Slicing to any single season/sub-range uses the
+  // game-summed totals exactly as before -- no behavior change there.
+  const bounds = await DB.prepare(`SELECT MIN(season_year) AS min_s, MAX(season_year) AS max_s FROM season`).first();
+  const isCareerRange = bounds && from <= bounds.min_s && to >= bounds.max_s;
+
+  if (!isCareerRange) {
+    const sql = `
+      SELECT pg.player_id, p.display_name AS name, MAX(pg.position_code) AS position,
+             SUM(t.${spec.column}) AS total, COUNT(*) AS games
+      FROM player_game pg
+      JOIN game g ON g.game_id = pg.game_id
+      JOIN ${spec.table} t ON t.player_game_id = pg.player_game_id
+      JOIN player p ON p.player_id = pg.player_id
+      WHERE g.season BETWEEN ? AND ? ${typeFilter} ${posFilter}
+      GROUP BY pg.player_id
+      HAVING total IS NOT NULL
+      ORDER BY total DESC
+      LIMIT ?
+    `;
+    const params = position ? [from, to, position, limit] : [from, to, limit];
+    const { results } = await DB.prepare(sql).bind(...params).all();
+    return { stat: statId, label: spec.label, from, to, position: position || null, scope: normalizeScope(scope), leaders: results };
+  }
+
+  // Career range: merge game-summed totals with historical overrides.
+  // The override wins when present -- a GAP player's game-summed total is
+  // necessarily incomplete (missing whatever seasons fall outside 1999-2026),
+  // while the override is the sourced true career number. ABSENT players
+  // (zero game rows at all) show up purely from the override side, with
+  // games = NULL -- the front end renders that as "career total" rather
+  // than a per-game count.
+  const overridePosFilter = position ? "AND COALESCE(gt.position, o.position) = ?" : "";
   const sql = `
-    SELECT pg.player_id, p.display_name AS name, MAX(pg.position_code) AS position,
-           SUM(t.${spec.column}) AS total, COUNT(*) AS games
-    FROM player_game pg
-    JOIN game g ON g.game_id = pg.game_id
-    JOIN ${spec.table} t ON t.player_game_id = pg.player_game_id
-    JOIN player p ON p.player_id = pg.player_id
-    WHERE g.season BETWEEN ? AND ? ${typeFilter} ${posFilter}
-    GROUP BY pg.player_id
-    HAVING total IS NOT NULL
+    WITH game_totals AS (
+      SELECT pg.player_id, MAX(pg.position_code) AS position, SUM(t.${spec.column}) AS total, COUNT(*) AS games
+      FROM player_game pg
+      JOIN game g ON g.game_id = pg.game_id
+      JOIN ${spec.table} t ON t.player_game_id = pg.player_game_id
+      WHERE g.season BETWEEN ? AND ? ${typeFilter}
+      GROUP BY pg.player_id
+      HAVING total IS NOT NULL
+    )
+    SELECT p.player_id, p.display_name AS name,
+           COALESCE(gt.position, o.position) AS position,
+           COALESCE(o.value, gt.total) AS total,
+           CASE WHEN o.value IS NOT NULL THEN NULL ELSE gt.games END AS games,
+           o.career_span AS career_span
+    FROM player p
+    LEFT JOIN game_totals gt ON gt.player_id = p.player_id
+    LEFT JOIN player_career_override o ON o.player_id = p.player_id AND o.stat = ?
+    WHERE (gt.player_id IS NOT NULL OR o.player_id IS NOT NULL)
+      ${overridePosFilter}
     ORDER BY total DESC
     LIMIT ?
   `;
-  const params = position ? [from, to, position, limit] : [from, to, limit];
+  const params = position ? [from, to, statId, position, limit] : [from, to, statId, limit];
   const { results } = await DB.prepare(sql).bind(...params).all();
   return { stat: statId, label: spec.label, from, to, position: position || null, scope: normalizeScope(scope), leaders: results };
 }

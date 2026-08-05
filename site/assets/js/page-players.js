@@ -88,9 +88,13 @@
       return;
     }
     const q = query.toLowerCase();
+    // Players with zero player_game rows (historical, override-only -- e.g. a
+    // pre-1999 retiree) have an empty `seasons` array, so Math.max(...[]) is
+    // -Infinity -- that just sorts them last among name matches, which is
+    // fine since a name search usually turns up only a handful of results.
     const matches = Object.entries(playersIndex)
       .filter(([, p]) => p.name.toLowerCase().includes(q))
-      .sort((a, b) => Math.max(...b[1].seasons) - Math.max(...a[1].seasons))
+      .sort((a, b) => Math.max(0, ...b[1].seasons) - Math.max(0, ...a[1].seasons))
       .slice(0, 20);
 
     if (!matches.length) {
@@ -99,15 +103,20 @@
     }
 
     resultsEl.innerHTML = `<ul>${matches
-      .map(
-        ([id, p]) => `
+      .map(([id, p]) => {
+        const range = p.seasons.length
+          ? `${Math.min(...p.seasons)}&ndash;${Math.max(...p.seasons)}`
+          : p.career_span
+          ? Util.escapeHtml(p.career_span)
+          : "career";
+        return `
         <li>
           <a href="players.html?id=${encodeURIComponent(id)}" data-id="${id}">
             <span>${Util.escapeHtml(p.name)}</span>
-            <span class="pos">${Util.escapeHtml(p.position)} &middot; ${Math.min(...p.seasons)}&ndash;${Math.max(...p.seasons)}</span>
+            <span class="pos">${Util.escapeHtml(p.position || "-")} &middot; ${range}</span>
           </a>
-        </li>`
-      )
+        </li>`;
+      })
       .join("")}</ul>`;
 
     resultsEl.querySelectorAll("a[data-id]").forEach((a) => {
@@ -141,8 +150,19 @@
       body = `<div class="card-grid">${statCards}</div>`;
     }
 
+    // Historical/override-only players (no player_game rows at all -- e.g. a
+    // pre-1999 retiree) have games_played=null and an empty seasons array;
+    // show their sourced career_span instead of a games/season-range line
+    // built from data that doesn't exist for them.
+    const isHistorical = career.games_played == null || !career.seasons.length;
+    const metaLine = isHistorical
+      ? `Career total${career.career_span ? ` (${Util.escapeHtml(career.career_span)})` : ""}${
+          career.historical_source ? ` &middot; source: ${Util.escapeHtml(career.historical_source)}` : ""
+        }`
+      : `${Util.escapeHtml(career.position || "-")} &middot; ${career.teams.join(", ")} &middot; ${career.games_played} games &middot; ${Math.min(...career.seasons)}&ndash;${Math.max(...career.seasons)}`;
+
     return `
-      <p>${Util.escapeHtml(career.position)} &middot; ${career.teams.join(", ")} &middot; ${career.games_played} games &middot; ${Math.min(...career.seasons)}&ndash;${Math.max(...career.seasons)}
+      <p>${metaLine}
         &middot; <a href="compare.html?ids=${encodeURIComponent(career.player_id)}">Compare this player &rarr;</a></p>
       ${body}
     `;

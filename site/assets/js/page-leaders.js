@@ -131,13 +131,16 @@
               </tr>
               ${expandRow}`;
           }
+          const careerNote = r.career_span
+            ? ` <span class="text-faint" title="Career total (${Util.escapeHtml(r.career_span)}) -- outside our 1999-2026 game-by-game data">&dagger;</span>`
+            : "";
           return `
             <tr>
               <td class="num">${rank}</td>
-              <td><a href="players.html?id=${encodeURIComponent(r.player_id)}">${Util.escapeHtml(r.name)}</a></td>
+              <td><a href="players.html?id=${encodeURIComponent(r.player_id)}">${Util.escapeHtml(r.name)}</a>${careerNote}</td>
               <td>${Util.escapeHtml(r.position || "-")}</td>
               <td class="num">${Util.num(r.total, 0)}</td>
-              <td class="num">${r.games}</td>
+              <td class="num">${r.games != null ? r.games : "&mdash;"}</td>
             </tr>`;
         })
         .join("");
