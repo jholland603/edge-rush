@@ -22,9 +22,14 @@
  *                                           columns into the games.html schedule table --
  *                                           replaces the old standalone picks.html page)
  *   /game/:gameId                       -- single-game detail: the game row, its model
- *                                           prediction (if any), each team's season-to-date
- *                                           (before this game) and full-season stat totals,
- *                                           and head-to-head history between the two teams
+ *                                           prediction (if any), a `signals` block (the
+ *                                           big-home-dog rule + every fatigue fact --
+ *                                           rest/road-streak/OT/timezone -- shown regardless
+ *                                           of whether it tested out as predictive, see
+ *                                           getGameSituationalSignals), each team's
+ *                                           season-to-date (before this game) and full-season
+ *                                           stat totals, and head-to-head history between the
+ *                                           two teams
  *   /game/:gameId/players/:team         -- every player on `team` who recorded a snap of
  *                                           offense in this game (passing/rushing/receiving),
  *                                           powers the "show players" expand row on the
@@ -32,17 +37,6 @@
  *   /trends                             -- situational ATS trends (home dogs by size,
  *                                           rest-advantage buckets, divisional vs. not),
  *                                           full 1999-present history, used by trends.html
- *   /signals/:season/:week              -- per-game "which team does each tested signal
- *                                           favor" scoreboard for one week: the EPA model's
- *                                           pick (vs. market) and the big-home-dog rule (the
- *                                           only standalone situational trend that's actually
- *                                           tested out as real -- see HANDOFF.md), plus a
- *                                           plain-language agree/conflict/single-signal
- *                                           verdict per game. Deliberately does NOT include
- *                                           fatigue (tested, no signal) or expert consensus
- *                                           (not backtestable, no data source connected) --
- *                                           only shows signals that have actually been
- *                                           tested and hold up. Used by signals.html.
  *   /trends/query?role=&side=&divisional=&month=&season_from=&season_to=
  *                &min_points=&max_points=&prior_result=&prior_min_margin=
  *                                        -- free-form ATS backtest: pick a role
@@ -168,11 +162,6 @@ export default {
 
       if (path === "/trends") {
         return json(await getTrends(DB));
-      }
-      if ((m = path.match(/^\/signals\/(\d{4})\/(\d{1,2})$/))) {
-        const week = await getWeekSignals(DB, Number(m[1]), Number(m[2]));
-        if (!week) return notFound(`no signals for ${m[1]} week ${m[2]}`);
-        return json(week);
       }
       if (path === "/trends/query") {
         const result = await getTrendsQuery(DB, url.searchParams);
@@ -748,83 +737,6 @@ async function getModelWeek(DB, season, week) {
 }
 
 // ---------------------------------------------------------------------------
-// /signals/:season/:week -- per-game scoreboard of which team each TESTED
-// signal favors. Only two signals currently qualify:
-//   1. The EPA model's pick vs. the market (model.edge, already computed by
-//      weekly_update.py) -- side = home if edge > 0, away if edge < 0.
-//   2. The "big home dog" rule (market_spread <= -7, i.e. home team getting
-//      7+ points) -- tested in HANDOFF.md ("Task #27 tested"), covers
-//      54-56% ATS across two different historical samples, but NOT folded
-//      into the model itself (doing so made the model's own picks worse --
-//      see HANDOFF.md). Treated here as its own independent, standalone
-//      signal, exactly as that finding recommended.
-// Fatigue and expert consensus are deliberately absent -- fatigue tested
-// with no signal, expert consensus has no historical backtest and isn't
-// wired up as a data source at all. Showing them here would misrepresent
-// untested/negative findings as if they were "which team this favors."
-// ---------------------------------------------------------------------------
-async function getWeekSignals(DB, season, week) {
-  const { results } = await DB.prepare(
-    `SELECT m.game_id, m.matchup, g.home_team, g.away_team, g.gameday,
-            m.market_spread, m.model_spread, m.edge, m.flagged, m.updated
-     FROM model m JOIN game g ON g.game_id = m.game_id
-     WHERE m.season = ? AND m.week = ? ORDER BY g.gameday, m.game_id`
-  )
-    .bind(season, week)
-    .all();
-  if (!results.length) return null;
-
-  const games = results.map((r) => {
-    const modelSide = r.edge > 0 ? "home" : r.edge < 0 ? "away" : null;
-    const bigHomeDogApplies = r.market_spread !== null && r.market_spread <= -7;
-    const bigHomeDogSide = bigHomeDogApplies ? "home" : null;
-
-    let agreement;
-    if (modelSide && bigHomeDogSide) {
-      agreement = modelSide === bigHomeDogSide ? "agree" : "conflict";
-    } else if (modelSide) {
-      agreement = "model_only";
-    } else if (bigHomeDogSide) {
-      agreement = "trend_only";
-    } else {
-      agreement = "none";
-    }
-
-    return {
-      game_id: r.game_id,
-      matchup: r.matchup,
-      home_team: r.home_team,
-      away_team: r.away_team,
-      gameday: r.gameday,
-      market_spread: r.market_spread,
-      model: {
-        model_spread: r.model_spread,
-        edge: r.edge,
-        side: modelSide,
-        flagged: !!r.flagged,
-      },
-      big_home_dog: {
-        applies: bigHomeDogApplies,
-        side: bigHomeDogSide,
-      },
-      agreement,
-    };
-  });
-
-  return {
-    season,
-    week,
-    updated: results[0].updated,
-    disclaimer:
-      "PAPER TRADING ONLY. The EPA model's confidence is not reliably calibrated. " +
-      "The big-home-dog rule is a real historical trend not yet integrated into the " +
-      "model (naively adding it made the model's own picks worse -- see HANDOFF.md). " +
-      "Nothing here is a recommendation.",
-    games,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // /picks/season/:season -- every picks_log row for a season, keyed by
 // game_id, mirrors getModelSeason's shape/pattern so games.html can overlay
 // the pick-log columns (bet placed, closing line, CLV, result) onto the
@@ -930,6 +842,96 @@ async function getTeamAggregate(DB, team, season, beforeWeek) {
 }
 
 // ---------------------------------------------------------------------------
+// Situational signals for /game/:gameId -- every situational data point
+// Jeff asked to see, shown regardless of whether it tested out as a real
+// predictive edge (unlike /trends and the old /signals route, which only
+// showed signals that survived backtesting). Each fact is labeled with its
+// tested status client-side (game.html) so "shown" never gets read as
+// "proven." Two pieces:
+//   1. big_home_dog -- market_spread <= -7. Tested, real (54-56% ATS across
+//      two samples, see HANDOFF.md "Task #27 tested"), but not folded into
+//      the model itself.
+//   2. fatigue -- short rest, consecutive true road games, coming off
+//      overtime, timezone crossing. Tested (HANDOFF.md "Situational fatigue
+//      score"), found NO signal in any of these individually. Shown anyway,
+//      as facts, because Jeff wants full visibility regardless of how a
+//      signal tracked -- explicitly not framed as "favors team X."
+// Team timezones are a coarse, hardcoded (not DST-aware) lookup by current
+// team_abbr -- documented as the one imprecise piece in the fatigue writeup.
+// ---------------------------------------------------------------------------
+const TEAM_TZ_OFFSET = {
+  ARI: -7, ATL: -5, BAL: -5, BUF: -5, CAR: -5, CHI: -6, CIN: -5, CLE: -5,
+  DAL: -6, DEN: -7, DET: -5, GB: -6, HOU: -6, IND: -5, JAX: -5, KC: -6,
+  LA: -8, LAC: -8, LV: -8, MIA: -5, MIN: -6, NE: -5, NO: -6, NYG: -5,
+  NYJ: -5, PHI: -5, PIT: -5, SEA: -8, SF: -8, TB: -5, TEN: -6, WAS: -5,
+  OAK: -8, SD: -8, STL: -6,
+};
+
+// Up to 8 of a team's most recent COMPLETED games strictly before
+// (season, week) -- enough to read off a road-game streak (rarely 4+ in
+// practice) and whether the last one went to overtime.
+async function getTeamRecentGames(DB, team, season, week, limit = 8) {
+  const { results } = await DB.prepare(
+    `
+    WITH tg AS (
+      SELECT g.season, g.week, 1 AS is_home, g.overtime
+      FROM game g WHERE g.home_team = ? AND g.result IS NOT NULL
+      UNION ALL
+      SELECT g.season, g.week, 0 AS is_home, g.overtime
+      FROM game g WHERE g.away_team = ? AND g.result IS NOT NULL
+    )
+    SELECT * FROM tg WHERE season < ? OR (season = ? AND week < ?)
+    ORDER BY season DESC, week DESC LIMIT ?
+    `
+  )
+    .bind(team, team, season, season, week, limit)
+    .all();
+  return results;
+}
+
+function teamFatigueFacts(recentGames, restDays, isHomeThisGame) {
+  let roadStreakEntering = 0;
+  for (const g of recentGames) {
+    if (g.is_home === 0) roadStreakEntering++;
+    else break;
+  }
+  return {
+    rest_days: restDays,
+    short_week: restDays !== null && restDays !== undefined ? restDays <= 4 : null,
+    road_streak_entering: roadStreakEntering,
+    road_streak_including_this_game: isHomeThisGame ? 0 : roadStreakEntering + 1,
+    coming_off_overtime: recentGames.length ? !!recentGames[0].overtime : null,
+  };
+}
+
+async function getGameSituationalSignals(DB, game) {
+  const bigHomeDogApplies = game.spread_line !== null && game.spread_line <= -7;
+
+  const [homeRecent, awayRecent] = await Promise.all([
+    getTeamRecentGames(DB, game.home_team, game.season, game.week),
+    getTeamRecentGames(DB, game.away_team, game.season, game.week),
+  ]);
+
+  const homeTz = TEAM_TZ_OFFSET[game.home_team];
+  const awayTz = TEAM_TZ_OFFSET[game.away_team];
+  const timezoneCrossing = homeTz !== undefined && awayTz !== undefined ? Math.abs(homeTz - awayTz) : null;
+
+  return {
+    big_home_dog: {
+      applies: bigHomeDogApplies,
+      side: bigHomeDogApplies ? "home" : null,
+      note: "Tested: home dogs of 7+ points cover 54-56% ATS across two historical samples. Real, but not folded into the model's own pick (doing so made the model's picks worse -- see HANDOFF.md).",
+    },
+    fatigue: {
+      home: teamFatigueFacts(homeRecent, game.home_rest, true),
+      away: teamFatigueFacts(awayRecent, game.away_rest, false),
+      timezone_crossing: timezoneCrossing,
+      note: "Tested against 27 years of history (rest, road streaks, coming off OT, timezone crossing) -- none showed a real predictive edge on their own. Shown here as context only, not a pick.",
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // /game/:gameId -- everything a single-game detail page needs in one call:
 // the game row itself, its model prediction (if this game was ever scored),
 // each team's season-to-date stats entering this game and full-season
@@ -954,7 +956,7 @@ async function getGameDetail(DB, gameId) {
     .first();
   if (!game) return null;
 
-  const [model, homeToDate, awayToDate, homeFull, awayFull, h2h, teamNames] = await Promise.all([
+  const [model, homeToDate, awayToDate, homeFull, awayFull, h2h, teamNames, signals] = await Promise.all([
     DB.prepare(
       `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total, updated, note
        FROM model WHERE game_id = ?`
@@ -980,6 +982,7 @@ async function getGameDetail(DB, gameId) {
     DB.prepare("SELECT team_abbr, team_name FROM team WHERE team_abbr IN (?, ?)")
       .bind(game.home_team, game.away_team)
       .all(),
+    getGameSituationalSignals(DB, game),
   ]);
 
   const team_names = {};
@@ -988,6 +991,7 @@ async function getGameDetail(DB, gameId) {
   return {
     game,
     model: model ? { ...model, flagged: !!model.flagged } : null,
+    signals,
     home: { team: game.home_team, season_to_date: homeToDate, full_season: homeFull },
     away: { team: game.away_team, season_to_date: awayToDate, full_season: awayFull },
     team_names,

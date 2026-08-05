@@ -1422,5 +1422,56 @@ page rather than a one-off doc.
   "What each signal means" section under the table spells out exactly how
   each one was tested and why fatigue/expert-consensus are excluded,
   directly in the UI, not just in this file.
-- **Needs a Worker redeploy** for `/signals/:season/:week` to go live, same
-  as `/trends/query` above — `site/` push is enough for the page itself.
+- **Superseded the same session — see next entry.** Jeff wanted every
+  signal shown regardless of tested status (not just the two that survived
+  backtesting) and wanted it on the existing game page instead of a new one.
+  `signals.html`/`page-signals.js`/the `/signals/:season/:week` route were
+  all removed; the functionality moved into `/game/:gameId` and
+  `game.html`. Left this entry in place as history of how the design got
+  here.
+
+## Situational signals moved onto game.html (signals.html removed)
+
+Follow-up in the same session: Jeff wanted (1) every situational data point
+shown, not just the two that tested as real — "no such thing as too much
+information" — and (2) the info living on the existing per-game page
+(`game.html`, reached via any matchup link) rather than a standalone list
+page. Pushed back on two things first: showing untested fatigue facts as if
+they "favor" a team would fabricate a claim the data doesn't support, and
+CLV structurally can't exist pre-game (no earlier line snapshot to diff
+against for games that were never flagged) — both agreed, addressed by
+labeling instead of hiding. Expert consensus stays out for now, revisit
+closer to Week 1.
+
+- **`signals.html`, `page-signals.js`, and the `/signals/:season/:week`
+  Worker route are deleted** (file removal required `allow_cowork_file_delete`
+  — the connected folder doesn't allow raw `rm`). Nav/footer links in
+  `components.js` reverted to the original 5 items.
+- **`/game/:gameId` now returns a `signals` block** (`getGameSituationalSignals`
+  in `worker/src/index.js`, called inside `getGameDetail`'s existing
+  `Promise.all`). Two pieces:
+  - `big_home_dog` — same `market_spread <= -7` test as before, `note`
+    field states the actual finding (54-56% ATS, real, not folded into the
+    model).
+  - `fatigue` — home/away rest days, short-week flag, consecutive true
+    road games entering this game, coming-off-overtime flag (all via a new
+    `getTeamRecentGames` helper — up to 8 of a team's most recent completed
+    games strictly before this one, via a small `UNION ALL` CTE, streak
+    counted in JS rather than a SQL window function since it only needs to
+    look at a handful of rows), and timezone crossing (new hardcoded
+    `TEAM_TZ_OFFSET` lookup, same 32-team table used in the earlier fatigue
+    sniff test — coarse/not DST-aware, documented as such). `fatigue.note`
+    states the actual finding (tested, no signal on any of these
+    individually).
+  - Verified `getTeamRecentGames`'s CTE directly against D1 with a real
+    game (`2025_19_LA_CAR`, a real big-home-dog game — CAR getting 10 at
+    home) — confirmed the road-streak-counting logic by hand against CAR's
+    actual last 8 games before that one.
+- **`game.html` gained a "Situational signals" section** (between the
+  model banner and Team Comparison): a warn banner when the big-home-dog
+  rule applies, and an away-vs-home fatigue-facts table, both always
+  labeled with what the backtest actually found — `renderSignals()` in
+  `page-game.js`. Nothing here is hidden for having tested negative; it's
+  shown with the negative finding attached.
+- **Needs a Worker redeploy** (`/game/:gameId`'s new `signals` field) —
+  `site/` push covers the rest, including the `signals.html` deletion.

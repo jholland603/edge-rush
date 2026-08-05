@@ -3,6 +3,7 @@
   const subtitleEl = document.getElementById("game-subtitle");
   const summaryWrap = document.getElementById("game-summary-wrap");
   const modelWrap = document.getElementById("model-wrap");
+  const signalsWrap = document.getElementById("signals-wrap");
   const compareWrap = document.getElementById("compare-table-wrap");
   const h2hWrap = document.getElementById("h2h-table-wrap");
 
@@ -84,6 +85,62 @@
         ${model.flagged ? "This game was flagged (|edge| &ge; 2.0 pts)." : "Not flagged."}
         <a href="games.html?season=${g.season}&week=${g.week}">See this week's picks &amp; log &rarr;</a>
       </div>
+    `;
+  }
+
+  // "Situational signals" -- every fact Jeff wanted visible, shown
+  // regardless of whether it tested out as predictive. Each block is
+  // labeled with what the backtest actually found, so "shown" never reads
+  // as "proven." See HANDOFF.md for the underlying tests.
+  function fatigueRow(label, awayVal, homeVal) {
+    return `<tr><td>${Util.escapeHtml(label)}</td><td class="num">${awayVal}</td><td class="num">${homeVal}</td></tr>`;
+  }
+
+  function yesNo(v) {
+    if (v === null || v === undefined) return "-";
+    return v ? "Yes" : "No";
+  }
+
+  function renderSignals(signals, g) {
+    if (!signals) {
+      signalsWrap.innerHTML = "";
+      return;
+    }
+    const { big_home_dog, fatigue } = signals;
+
+    const dogBanner = big_home_dog.applies
+      ? `
+        <div class="banner warn">
+          <strong>Big home dog rule applies:</strong> ${Util.escapeHtml(g.home_team)} is getting
+          ${Math.abs(g.spread_line).toFixed(1).replace(/\.0$/, "")}+ points at home.
+          ${Util.escapeHtml(big_home_dog.note)}
+        </div>
+      `
+      : `<p class="text-faint">Big home dog rule: doesn't apply (home team isn't getting 7+ points).</p>`;
+
+    const away = fatigue.away;
+    const home = fatigue.home;
+    const tzLabel = fatigue.timezone_crossing === null || fatigue.timezone_crossing === undefined
+      ? "-"
+      : `${fatigue.timezone_crossing} zone${fatigue.timezone_crossing === 1 ? "" : "s"}`;
+
+    signalsWrap.innerHTML = `
+      ${dogBanner}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Fatigue fact</th><th class="num">${Util.escapeHtml(g.away_team)} (away)</th><th class="num">${Util.escapeHtml(g.home_team)} (home)</th></tr>
+          </thead>
+          <tbody>
+            ${fatigueRow("Days rest", away.rest_days ?? "-", home.rest_days ?? "-")}
+            ${fatigueRow("Short week (&le;4 days)", yesNo(away.short_week), yesNo(home.short_week))}
+            ${fatigueRow("Consecutive true road games entering this game", away.road_streak_entering, home.road_streak_entering)}
+            ${fatigueRow("Coming off overtime", yesNo(away.coming_off_overtime), yesNo(home.coming_off_overtime))}
+          </tbody>
+        </table>
+      </div>
+      <p class="text-faint">Timezone crossing (away team's home zone vs. this game's venue): ${tzLabel}.
+        ${Util.escapeHtml(fatigue.note)}</p>
     `;
   }
 
@@ -196,12 +253,14 @@
     const detail = await Data.getGameDetail(gameId);
     renderSummary(detail.game, detail.team_names || {});
     renderModel(detail.model, detail.game);
+    renderSignals(detail.signals, detail.game);
     renderCompare(detail);
     renderH2H(detail, detail.head_to_head);
   } catch (err) {
     titleEl.textContent = "Couldn't load game";
     subtitleEl.textContent = "";
     Util.showError(summaryWrap, err);
+    Util.showError(signalsWrap, err);
     Util.showError(compareWrap, err);
     Util.showError(h2hWrap, err);
   }
