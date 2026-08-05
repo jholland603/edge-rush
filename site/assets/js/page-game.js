@@ -230,63 +230,104 @@
     signalsWrap.innerHTML = cards.join("");
   }
 
-  const STAT_ROWS = [
-    { label: "Games", get: (t) => t.games_played, fmt: (v) => (v ?? "-") },
-    { label: "Pass Yds", get: (t) => t.passing_yards },
-    { label: "Pass TD", get: (t) => t.passing_tds },
-    { label: "Pass EPA/play", get: (t) => (t.attempts ? t.passing_epa / t.attempts : null), fmt: (v) => Util.signed(v, 2) },
-    { label: "INT Thrown", get: (t) => t.passing_interceptions },
-    { label: "Rush Yds", get: (t) => t.rushing_yards },
-    { label: "Rush TD", get: (t) => t.rushing_tds },
-    { label: "Rush EPA/play", get: (t) => (t.carries ? t.rushing_epa / t.carries : null), fmt: (v) => Util.signed(v, 2) },
+  // Grouped into a handful of category cards instead of one long 16-row
+  // table -- same data, far less vertical space. `higherBetter` drives a
+  // subtle bold/accent highlight on whichever team has the better raw
+  // number for that stat (true = higher wins, false = lower wins, null =
+  // no clear direction, e.g. FG made/att shown as a fraction) -- this is
+  // just describing which team's box score is ahead, not a prediction.
+  const STAT_GROUPS = [
     {
-      label: "Turnovers Lost",
-      get: (t) => (t.sack_fumbles_lost || 0) + (t.rushing_fumbles_lost || 0) + (t.receiving_fumbles_lost || 0),
+      title: "Passing",
+      rows: [
+        { label: "Yards", get: (t) => t.passing_yards, higherBetter: true },
+        { label: "TD", get: (t) => t.passing_tds, higherBetter: true },
+        { label: "EPA/play", get: (t) => (t.attempts ? t.passing_epa / t.attempts : null), fmt: (v) => Util.signed(v, 2), higherBetter: true },
+        { label: "INT Thrown", get: (t) => t.passing_interceptions, higherBetter: false },
+      ],
     },
-    { label: "Sacks (Def)", get: (t) => t.def_sacks },
-    { label: "INT (Def)", get: (t) => t.def_interceptions },
-    { label: "TFL (Def)", get: (t) => t.def_tackles_for_loss },
-    { label: "Forced Fumbles", get: (t) => t.def_fumbles_forced },
-    { label: "FG Made/Att", get: (t) => `${t.fg_made ?? 0}/${t.fg_att ?? 0}`, fmt: (v) => v },
-    { label: "Punt Net Avg", get: (t) => (t.pt_att ? t.pt_net_yards / t.pt_att : null), fmt: (v) => Util.num(v, 1) },
-    { label: "Penalties", get: (t) => t.penalties },
-    { label: "Penalty Yds", get: (t) => t.penalty_yards },
+    {
+      title: "Rushing",
+      rows: [
+        { label: "Yards", get: (t) => t.rushing_yards, higherBetter: true },
+        { label: "TD", get: (t) => t.rushing_tds, higherBetter: true },
+        { label: "EPA/play", get: (t) => (t.carries ? t.rushing_epa / t.carries : null), fmt: (v) => Util.signed(v, 2), higherBetter: true },
+      ],
+    },
+    {
+      title: "Defense",
+      rows: [
+        { label: "Sacks", get: (t) => t.def_sacks, higherBetter: true },
+        { label: "INT", get: (t) => t.def_interceptions, higherBetter: true },
+        { label: "TFL", get: (t) => t.def_tackles_for_loss, higherBetter: true },
+        { label: "Forced Fum.", get: (t) => t.def_fumbles_forced, higherBetter: true },
+      ],
+    },
+    {
+      title: "Discipline & Special Teams",
+      rows: [
+        {
+          label: "Turnovers Lost",
+          get: (t) => (t.sack_fumbles_lost || 0) + (t.rushing_fumbles_lost || 0) + (t.receiving_fumbles_lost || 0),
+          higherBetter: false,
+        },
+        { label: "FG Made/Att", get: (t) => `${t.fg_made ?? 0}/${t.fg_att ?? 0}`, fmt: (v) => v, higherBetter: null },
+        { label: "Punt Net Avg", get: (t) => (t.pt_att ? t.pt_net_yards / t.pt_att : null), fmt: (v) => Util.num(v, 1), higherBetter: true },
+        { label: "Penalties", get: (t) => t.penalties, higherBetter: false },
+        { label: "Penalty Yds", get: (t) => t.penalty_yards, higherBetter: false },
+      ],
+    },
   ];
 
-  function cell(stat, teamStats) {
+  function compareRow(stat, awayStats, homeStats) {
     const fmt = stat.fmt || ((v) => (v === null || v === undefined ? "-" : v));
-    return `<td class="num">${fmt(stat.get(teamStats || {}))}</td>`;
+    const awayRaw = stat.get(awayStats || {});
+    const homeRaw = stat.get(homeStats || {});
+    let awayCls = "";
+    let homeCls = "";
+    if (stat.higherBetter !== null && typeof awayRaw === "number" && typeof homeRaw === "number" && awayRaw !== homeRaw) {
+      const awayWins = stat.higherBetter ? awayRaw > homeRaw : awayRaw < homeRaw;
+      awayCls = awayWins ? "text-accent" : "";
+      homeCls = !awayWins ? "text-accent" : "";
+    }
+    return `
+      <div class="compare-row">
+        <span class="compare-row__label">${Util.escapeHtml(stat.label)}</span>
+        <span class="compare-row__val ${awayCls}">${fmt(awayRaw)}</span>
+        <span class="compare-row__val ${homeCls}">${fmt(homeRaw)}</span>
+      </div>
+    `;
   }
 
-  // Condensed to 3 columns (Stat / Away / Home) instead of always showing
-  // both "to date" and "full season" side by side -- the view toggle in
-  // game.html switches which scope is displayed instead of doubling the
-  // table width to show both at once.
+  // Condensed into category cards instead of one long table, and to 2 value
+  // columns (Away/Home) instead of always showing both "to date" and "full
+  // season" at once -- the view toggle in game.html switches scope instead
+  // of doubling the width to show both.
   function renderCompare(detail, view) {
     const awayStats = view === "full_season" ? detail.away.full_season : detail.away.season_to_date;
     const homeStats = view === "full_season" ? detail.home.full_season : detail.home.season_to_date;
+    const awayGames = awayStats && awayStats.games_played;
+    const homeGames = homeStats && homeStats.games_played;
 
-    const rows = STAT_ROWS.map(
-      (stat) => `
-        <tr>
-          <td>${stat.label}</td>
-          ${cell(stat, awayStats)}
-          ${cell(stat, homeStats)}
-        </tr>
+    const cards = STAT_GROUPS.map(
+      (group) => `
+        <div class="signal-card">
+          <div class="signal-card__title"><span>${Util.escapeHtml(group.title)}</span></div>
+          <div class="compare-row compare-row--header">
+            <span class="compare-row__label"></span>
+            <span class="compare-row__val">${Util.escapeHtml(detail.away.team)}</span>
+            <span class="compare-row__val">${Util.escapeHtml(detail.home.team)}</span>
+          </div>
+          ${group.rows.map((stat) => compareRow(stat, awayStats, homeStats)).join("")}
+        </div>
       `
     ).join("");
 
     compareWrap.innerHTML = `
-      <table>
-        <thead>
-          <tr>
-            <th>Stat</th>
-            <th class="num">${Util.escapeHtml(detail.away.team)} (away)</th>
-            <th class="num">${Util.escapeHtml(detail.home.team)} (home)</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <p class="text-faint" style="margin-bottom:var(--space-3);">
+        Games: ${Util.escapeHtml(detail.away.team)} ${awayGames ?? "-"} &middot; ${Util.escapeHtml(detail.home.team)} ${homeGames ?? "-"}
+      </p>
+      <div class="signals-grid">${cards}</div>
     `;
   }
 

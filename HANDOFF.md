@@ -1537,3 +1537,25 @@ style" layout.
   counts, QB display names, referee name) before trusting the mock.
 - **Needs a Worker redeploy** for the expanded `signals` block —
   `site/` push covers the card/toggle UI.
+
+## Team Comparison condensed too (same card layout as Situational Signals)
+
+Jeff's follow-up: liked the signal cards, wanted Team Comparison condensed
+the same way — it was still one 16-row, 3-column table.
+
+- `page-game.js`: `STAT_ROWS` regrouped into `STAT_GROUPS` (Passing,
+  Rushing, Defense, Discipline & Special Teams) rendered as `.signal-card`
+  tiles in the same `.signals-grid` used above, instead of one long table.
+  Games-played moved out of the grid into a one-line caption above it.
+- Each stat row now has a `higherBetter` flag (`true`/`false`/`null`) and
+  `compareRow()` bolds+accents whichever team's raw number is ahead for that
+  stat (INT thrown/turnovers/penalties correctly treated as lower-is-better,
+  not just highest-number-wins) — purely descriptive of the completed box
+  score, not a prediction, same as the ATS/O-U badges elsewhere on the site.
+- `game.html`: `#compare-table-wrap`'s `table-wrap` class removed (that
+  class adds a bordered outer box meant for `<table>`, which double-boxed
+  against the cards' own borders now that it's not a table anymore) — new
+  CSS `.compare-row`/`.compare-row__label`/`.compare-row__val`/
+  `.compare-row--header` in `style.css`.
+- Site-only change (`page-game.js`, `game.html`, `style.css`) — no Worker
+  redeploy needed, `site/` push is enough.
