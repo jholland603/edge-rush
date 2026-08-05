@@ -1008,10 +1008,109 @@ async function getRefereeName(DB, refereeId) {
   return row ? row.name : null;
 }
 
+// Defensive pass rating allowed -- NOT one of the model's ratings (those
+// are EPA-based); this is the traditional NFL passer-rating formula applied
+// to whatever the OPPOSING offense did against this team's defense,
+// season-to-date entering this game. `team_game.opponent_team` lets this
+// join straight to the opponent's own `team_game_offense` row for each of
+// this team's games, no separate "defense allowed" table needed. Untested
+// as a standalone ATS signal in this project -- it's a real, standard
+// quality metric, just not backtested here.
+async function getTeamPassDefenseAllowed(DB, team, season, beforeWeek) {
+  const weekClause = beforeWeek != null ? "AND g.week < ?" : "";
+  const args = beforeWeek != null ? [team, season, beforeWeek] : [team, season];
+  return DB.prepare(
+    `
+    SELECT SUM(o.completions) completions, SUM(o.attempts) attempts, SUM(o.passing_yards) passing_yards,
+           SUM(o.passing_tds) passing_tds, SUM(o.passing_interceptions) passing_interceptions
+    FROM team_game tg JOIN game g ON g.game_id = tg.game_id
+    JOIN team_game_offense o ON o.team_game_id = tg.team_game_id
+    WHERE tg.opponent_team = ? AND g.season = ? ${weekClause}
+    `
+  )
+    .bind(...args)
+    .first();
+}
+
+function passerRating(stats) {
+  if (!stats || !stats.attempts) return null;
+  const clamp = (v) => Math.max(0, Math.min(2.375, v));
+  const att = stats.attempts;
+  const a = clamp(((stats.completions / att) - 0.3) * 5);
+  const b = clamp(((stats.passing_yards / att) - 3) * 0.25);
+  const c = clamp((stats.passing_tds / att) * 20);
+  const d = clamp(2.375 - (stats.passing_interceptions / att) * 25);
+  return Math.round((((a + b + c + d) / 6) * 100) * 10) / 10;
+}
+
+// Common opponents -- every opponent BOTH teams have already played this
+// season (entering this game), with each side's scoring margin against
+// that opponent. Classic scouting comparison, not a repeatable trend, so
+// there's nothing to backtest -- purely contextual, per-matchup.
+async function getTeamSeasonResults(DB, team, season, beforeWeek) {
+  const weekClause = beforeWeek != null ? "AND g.week < ?" : "";
+  const args = beforeWeek != null ? [team, team, season, team, team, beforeWeek] : [team, team, season, team, team];
+  const { results } = await DB.prepare(
+    `
+    SELECT
+      CASE WHEN g.home_team = ? THEN g.away_team ELSE g.home_team END AS opponent,
+      CASE WHEN g.home_team = ? THEN g.home_score - g.away_score ELSE g.away_score - g.home_score END AS margin
+    FROM game g
+    WHERE g.season = ? AND (g.home_team = ? OR g.away_team = ?) AND g.result IS NOT NULL ${weekClause}
+    `
+  )
+    .bind(...args)
+    .all();
+  return results;
+}
+
+function commonOpponents(homeResults, awayResults, homeTeam, awayTeam) {
+  const groupByOpp = (rows) => {
+    const map = {};
+    for (const r of rows) {
+      if (r.opponent === homeTeam || r.opponent === awayTeam) continue; // meetings between these two -- that's Head-to-Head, not a "common" 3rd team
+      (map[r.opponent] ||= []).push(r.margin);
+    }
+    return map;
+  };
+  const homeMap = groupByOpp(homeResults);
+  const awayMap = groupByOpp(awayResults);
+  const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+
+  const common = Object.keys(homeMap)
+    .filter((opp) => awayMap[opp])
+    .map((opp) => ({
+      opponent: opp,
+      home_avg_margin: Math.round(avg(homeMap[opp]) * 10) / 10,
+      home_games: homeMap[opp].length,
+      away_avg_margin: Math.round(avg(awayMap[opp]) * 10) / 10,
+      away_games: awayMap[opp].length,
+    }))
+    .sort((a, b) => a.opponent.localeCompare(b.opponent));
+  return common;
+}
+
+// Weekday/primetime -- tested (see below), no signal. Uses game.weekday/
+// gametime, already selected by getGameDetail, no extra query needed.
+function primetimeBucket(weekday, gametime) {
+  if (!weekday) return null;
+  if (weekday === "Thursday") return "Thursday";
+  if (weekday === "Monday") return "Monday";
+  if (weekday === "Saturday") return "Saturday";
+  if (weekday === "Sunday") {
+    const hour = gametime ? Number(gametime.slice(0, 2)) : null;
+    return hour !== null && hour >= 19 ? "Sunday Night" : "Sunday Day";
+  }
+  return "Other";
+}
+
 async function getGameSituationalSignals(DB, game) {
   const bigHomeDogApplies = game.spread_line !== null && game.spread_line <= -7;
 
-  const [homeRecent, awayRecent, homeQb, awayQb, coachTenure, draftCapital, refereeName] = await Promise.all([
+  const [
+    homeRecent, awayRecent, homeQb, awayQb, coachTenure, draftCapital, refereeName,
+    homePassDefAllowed, awayPassDefAllowed, homeSeasonResults, awaySeasonResults,
+  ] = await Promise.all([
     getTeamRecentGames(DB, game.home_team, game.season, game.week),
     getTeamRecentGames(DB, game.away_team, game.season, game.week),
     getTeamQbInfo(DB, game.home_team, game.season, game.week, game.home_qb_id),
@@ -1019,6 +1118,10 @@ async function getGameSituationalSignals(DB, game) {
     getCoachTenure(DB, game.game_id),
     getDraftCapital(DB, game.home_team, game.away_team),
     getRefereeName(DB, game.referee_id),
+    getTeamPassDefenseAllowed(DB, game.home_team, game.season, game.week),
+    getTeamPassDefenseAllowed(DB, game.away_team, game.season, game.week),
+    getTeamSeasonResults(DB, game.home_team, game.season, game.week),
+    getTeamSeasonResults(DB, game.away_team, game.season, game.week),
   ]);
 
   const homeTz = TEAM_TZ_OFFSET[game.home_team];
@@ -1069,6 +1172,21 @@ async function getGameSituationalSignals(DB, game) {
       name: refereeName,
       note: "Not tested at all -- no backtest has been run comparing referees to any outcome. Shown purely as a fact.",
     },
+    pass_defense_allowed: {
+      home: passerRating(homePassDefAllowed),
+      away: passerRating(awayPassDefAllowed),
+      note: "Not tested as a standalone ATS signal in this project -- a standard, real quality metric (traditional NFL passer rating formula applied to what each defense has allowed season-to-date), just not backtested here. Different from the model's own EPA-based ratings.",
+    },
+    common_opponents: {
+      opponents: commonOpponents(homeSeasonResults, awaySeasonResults, game.home_team, game.away_team),
+      note: "Not a repeatable trend, nothing to backtest -- a scouting comparison, not a signal. Positive margin = that team won by that many points on average against the shared opponent.",
+    },
+    primetime: {
+      bucket: primetimeBucket(game.weekday, game.gametime),
+      note: "Tested: Thursday/Sunday-night/Monday/Saturday games all land within a point or two of a 50/50 home cover rate (48.3-51.5% across n=250-5,517 each) -- no clean trend by time slot.",
+    },
+    turnover_margin_note:
+      "Not tested in this project. Widely-cited public research (fumble recovery rates in particular are close to a coin flip) suggests raw turnover margin doesn't reliably predict future performance -- shown as a descriptive fact only, computed from season-to-date takeaways (defensive INTs + recovered opponent fumbles) minus giveaways (INTs thrown + fumbles lost).",
   };
 }
 

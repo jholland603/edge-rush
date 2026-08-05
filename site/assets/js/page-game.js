@@ -120,12 +120,22 @@
     return `<div class="row"><span>${Util.escapeHtml(teamAbbr)}</span><span class="text-accent">${Util.escapeHtml(actual)} <span class="text-faint">(vs. ${Util.escapeHtml(established)})</span></span></div>`;
   }
 
-  function renderSignals(signals, g) {
+  function turnoverMargin(stats) {
+    if (!stats) return null;
+    const takeaways = (stats.def_interceptions || 0) + (stats.fumble_recovery_opp || 0);
+    const giveaways = (stats.passing_interceptions || 0) + (stats.fumbles_lost_total || 0);
+    return takeaways - giveaways;
+  }
+
+  function renderSignals(signals, g, detail) {
     if (!signals) {
       signalsWrap.innerHTML = "";
       return;
     }
-    const { big_home_dog, fatigue, qb_status, coach_tenure, divisional, draft_capital, referee } = signals;
+    const {
+      big_home_dog, fatigue, qb_status, coach_tenure, divisional, draft_capital, referee,
+      pass_defense_allowed, common_opponents, primetime, turnover_margin_note,
+    } = signals;
 
     const cards = [];
 
@@ -226,6 +236,46 @@
     cards.push(
       signalCard("Referee", "untested", referee.name ? Util.escapeHtml(referee.name) : "-", referee.note)
     );
+
+    cards.push(
+      signalCard(
+        "Pass Defense Allowed",
+        "untested",
+        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${pass_defense_allowed.away ?? "-"}</span></div>` +
+          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${pass_defense_allowed.home ?? "-"}</span></div>`,
+        pass_defense_allowed.note
+      )
+    );
+
+    const awayTO = turnoverMargin(detail.away.season_to_date);
+    const homeTO = turnoverMargin(detail.home.season_to_date);
+    cards.push(
+      signalCard(
+        "Turnover Margin",
+        "untested",
+        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${awayTO === null ? "-" : Util.signed(awayTO, 0)}</span></div>` +
+          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${homeTO === null ? "-" : Util.signed(homeTO, 0)}</span></div>`,
+        turnover_margin_note
+      )
+    );
+
+    cards.push(
+      signalCard("Game Slot", "none", primetime.bucket ? Util.escapeHtml(primetime.bucket) : "-", primetime.note)
+    );
+
+    const commonOppRows = common_opponents.opponents.length
+      ? common_opponents.opponents
+          .map(
+            (o) => `
+              <div class="row"><span>vs ${Util.escapeHtml(o.opponent)}</span><span>
+                ${Util.escapeHtml(g.away_team)} ${Util.signed(o.away_avg_margin, 1)}${o.away_games > 1 ? ` (${o.away_games}g)` : ""},
+                ${Util.escapeHtml(g.home_team)} ${Util.signed(o.home_avg_margin, 1)}${o.home_games > 1 ? ` (${o.home_games}g)` : ""}
+              </span></div>
+            `
+          )
+          .join("")
+      : `<span class="text-faint">No common opponents played yet this season.</span>`;
+    cards.push(signalCard("Common Opponents", "untested", commonOppRows, common_opponents.note));
 
     signalsWrap.innerHTML = cards.join("");
   }
@@ -383,7 +433,7 @@
     const detail = await Data.getGameDetail(gameId);
     renderSummary(detail.game, detail.team_names || {});
     renderModel(detail.model, detail.game);
-    renderSignals(detail.signals, detail.game);
+    renderSignals(detail.signals, detail.game, detail);
     renderCompare(detail, compareView);
     renderH2H(detail, detail.head_to_head);
 

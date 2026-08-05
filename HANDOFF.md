@@ -1559,3 +1559,49 @@ the same way — it was still one 16-row, 3-column table.
   `.compare-row--header` in `style.css`.
 - Site-only change (`page-game.js`, `game.html`, `style.css`) — no Worker
   redeploy needed, `site/` push is enough.
+
+## Four more signal cards: pass defense allowed, common opponents, turnover margin, game slot
+
+Jeff asked what else could go on the Situational Signals cards, specifically
+floating defensive passer rating and common opponents. Checked the schema
+first for red zone/third down stats (what usually comes up alongside
+those two) — nflverse's `stats_team_week` doesn't include either, so those
+aren't available from this data source; said so rather than faking it.
+
+- **Pass Defense Allowed** — NOT the model's EPA-based rating; the
+  traditional NFL passer-rating formula applied to what each defense has
+  allowed season-to-date. New `getTeamPassDefenseAllowed` joins
+  `team_game.opponent_team` back to the opposing team's own
+  `team_game_offense` row for each game, so "what this defense allowed" is
+  just "what the other team's offense did," summed and run through
+  `passerRating()`. Untested as a standalone signal (real, standard metric,
+  just never backtested here). Verified against real 2024 data (BUF
+  ~92.6 allowed, NE ~98.2, both sane) by hand-computing the formula
+  alongside the query.
+- **Common Opponents** — every opponent both teams have already played
+  this season, with each side's average scoring margin against that
+  opponent (multiple meetings averaged, divisional double-plays between
+  the two teams themselves excluded — that's Head-to-Head, not a "common"
+  3rd team). New `getTeamSeasonResults` + `commonOpponents()`. Contextual
+  scouting comparison, not a repeatable trend — nothing to backtest, so no
+  status beyond "untested." Verified against real data: NE/BUF week 18
+  2024 correctly surfaces 10 shared opponents (ARI, HOU, IND, JAX, LA, MIA
+  x2, NYJ x2, SEA, SF, TEN) with correct averaged margins, hand-checked.
+- **Turnover Margin** — computed entirely client-side in `page-game.js`
+  from data the page already fetches (`detail.home/away.season_to_date`'s
+  existing `def_interceptions`/`fumble_recovery_opp` minus
+  `passing_interceptions`/`fumbles_lost_total`) — no new Worker query
+  needed. Untested in this project; note references the widely-cited
+  public finding that fumble recovery is close to a coin flip, so raw
+  turnover margin isn't a reliable predictor — shown as a fact, framed with
+  that caveat, not as a signal to lean on.
+- **Game Slot (primetime)** — actually sniff-tested before adding, same
+  discipline as every other trend in this project: bucketed the full game
+  history by weekday/kickoff time (Thursday/Sunday-day/Sunday-night/Monday/
+  Saturday) and checked home cover %. Result: 48.3-51.5% across every real
+  bucket (n=250-5,517 each) — no clean trend, same shape as fatigue/rest.
+  Uses `game.weekday`/`gametime`, already fetched, no new query.
+- All four verified via a full mock `/game/:gameId` fetch (`node`, not
+  committed) built on real values pulled from D1, cross-checked by hand.
+- **Needs a Worker redeploy** for the four new `signals` fields — `site/`
+  push covers the new cards.
