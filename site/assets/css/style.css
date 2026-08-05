@@ -406,6 +406,83 @@ tr.expand-row td {
 .badge.neutral { background: rgba(139, 152, 165, 0.15); color: var(--color-text-dim); }
 .badge.warn { background: rgba(240, 184, 75, 0.15); color: var(--color-warn); }
 
+/* ---------------- signal cards (compact "dashboard" tiles) ---------------- */
+.signals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+.signal-card {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+.signal-card__title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.signal-card__body {
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.signal-card__body .row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.real { background: var(--color-accent); }
+.status-dot.none { background: var(--color-text-faint); }
+.status-dot.inconclusive { background: var(--color-warn); }
+.status-dot.untested { background: #6fb7ff; }
+
+.signals-legend {
+  font-size: 0.78rem;
+  color: var(--color-text-dim);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-4);
+}
+.signals-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin-bottom: var(--space-3);
+}
+.view-toggle button {
+  background: var(--color-bg-card);
+  color: var(--color-text-dim);
+  border: none;
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.85rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
+.view-toggle button.active {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-weight: 600;
+}
+
 /* ---------------- banners ---------------- */
 .banner {
   border-radius: var(--radius-md);

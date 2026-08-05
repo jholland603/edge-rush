@@ -89,16 +89,35 @@
   }
 
   // "Situational signals" -- every fact Jeff wanted visible, shown
-  // regardless of whether it tested out as predictive. Each block is
-  // labeled with what the backtest actually found, so "shown" never reads
-  // as "proven." See HANDOFF.md for the underlying tests.
-  function fatigueRow(label, awayVal, homeVal) {
-    return `<tr><td>${Util.escapeHtml(label)}</td><td class="num">${awayVal}</td><td class="num">${homeVal}</td></tr>`;
-  }
-
+  // regardless of whether it tested out as predictive. Compact dashboard
+  // cards instead of prose/tables -- a status dot says what the backtest
+  // found (see the legend in game.html), the full explanation lives in a
+  // <details> so it doesn't eat vertical space by default. See HANDOFF.md
+  // for the underlying tests.
   function yesNo(v) {
     if (v === null || v === undefined) return "-";
     return v ? "Yes" : "No";
+  }
+
+  function signalCard(title, status, bodyHtml, note) {
+    return `
+      <div class="signal-card">
+        <div class="signal-card__title">
+          <span>${Util.escapeHtml(title)}</span>
+          <span class="status-dot ${status}"></span>
+        </div>
+        <div class="signal-card__body">${bodyHtml}</div>
+        ${note ? `<details><summary class="text-faint" style="cursor:pointer; font-size:0.78rem; margin-top:6px;">What this means</summary><p class="text-faint" style="font-size:0.78rem; margin-top:4px;">${Util.escapeHtml(note)}</p></details>` : ""}
+      </div>
+    `;
+  }
+
+  function qbLine(teamAbbr, qb) {
+    const established = qb.established_qb_name || "unknown";
+    if (qb.changed === null) return `<div class="row"><span>${Util.escapeHtml(teamAbbr)}</span><span class="text-faint">no history</span></div>`;
+    if (!qb.changed) return `<div class="row"><span>${Util.escapeHtml(teamAbbr)}</span><span>${Util.escapeHtml(established)} (starter)</span></div>`;
+    const actual = qb.actual_qb_name || "backup (TBD)";
+    return `<div class="row"><span>${Util.escapeHtml(teamAbbr)}</span><span class="text-accent">${Util.escapeHtml(actual)} <span class="text-faint">(vs. ${Util.escapeHtml(established)})</span></span></div>`;
   }
 
   function renderSignals(signals, g) {
@@ -106,42 +125,109 @@
       signalsWrap.innerHTML = "";
       return;
     }
-    const { big_home_dog, fatigue } = signals;
+    const { big_home_dog, fatigue, qb_status, coach_tenure, divisional, draft_capital, referee } = signals;
 
-    const dogBanner = big_home_dog.applies
-      ? `
-        <div class="banner warn">
-          <strong>Big home dog rule applies:</strong> ${Util.escapeHtml(g.home_team)} is getting
-          ${Math.abs(g.spread_line).toFixed(1).replace(/\.0$/, "")}+ points at home.
-          ${Util.escapeHtml(big_home_dog.note)}
-        </div>
-      `
-      : `<p class="text-faint">Big home dog rule: doesn't apply (home team isn't getting 7+ points).</p>`;
+    const cards = [];
 
-    const away = fatigue.away;
-    const home = fatigue.home;
-    const tzLabel = fatigue.timezone_crossing === null || fatigue.timezone_crossing === undefined
-      ? "-"
-      : `${fatigue.timezone_crossing} zone${fatigue.timezone_crossing === 1 ? "" : "s"}`;
+    cards.push(
+      signalCard(
+        "Big Home Dog",
+        "real",
+        big_home_dog.applies
+          ? `<strong class="text-accent">Applies</strong> &mdash; ${Util.escapeHtml(g.home_team)} +${Math.abs(g.spread_line).toFixed(1).replace(/\.0$/, "")}`
+          : `Doesn't apply`,
+        big_home_dog.note
+      )
+    );
 
-    signalsWrap.innerHTML = `
-      ${dogBanner}
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Fatigue fact</th><th class="num">${Util.escapeHtml(g.away_team)} (away)</th><th class="num">${Util.escapeHtml(g.home_team)} (home)</th></tr>
-          </thead>
-          <tbody>
-            ${fatigueRow("Days rest", away.rest_days ?? "-", home.rest_days ?? "-")}
-            ${fatigueRow("Short week (&le;4 days)", yesNo(away.short_week), yesNo(home.short_week))}
-            ${fatigueRow("Consecutive true road games entering this game", away.road_streak_entering, home.road_streak_entering)}
-            ${fatigueRow("Coming off overtime", yesNo(away.coming_off_overtime), yesNo(home.coming_off_overtime))}
-          </tbody>
-        </table>
-      </div>
-      <p class="text-faint">Timezone crossing (away team's home zone vs. this game's venue): ${tzLabel}.
-        ${Util.escapeHtml(fatigue.note)}</p>
-    `;
+    cards.push(
+      signalCard(
+        "QB Status",
+        "real",
+        qbLine(g.away_team, qb_status.away) + qbLine(g.home_team, qb_status.home),
+        qb_status.note
+      )
+    );
+
+    cards.push(
+      signalCard(
+        "Rest",
+        "none",
+        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${fatigue.away.rest_days ?? "-"} days${fatigue.away.short_week ? " (short)" : ""}</span></div>` +
+          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${fatigue.home.rest_days ?? "-"} days${fatigue.home.short_week ? " (short)" : ""}</span></div>`,
+        fatigue.note
+      )
+    );
+
+    cards.push(
+      signalCard(
+        "Road Trip",
+        "none",
+        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${fatigue.away.road_streak_including_this_game} straight</span></div>` +
+          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${fatigue.home.road_streak_including_this_game} straight</span></div>`,
+        fatigue.note
+      )
+    );
+
+    cards.push(
+      signalCard(
+        "Coming Off OT",
+        "none",
+        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${yesNo(fatigue.away.coming_off_overtime)}</span></div>` +
+          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${yesNo(fatigue.home.coming_off_overtime)}</span></div>`,
+        fatigue.note
+      )
+    );
+
+    cards.push(
+      signalCard(
+        "Timezone Crossing",
+        "none",
+        fatigue.timezone_crossing === null || fatigue.timezone_crossing === undefined
+          ? "-"
+          : `${fatigue.timezone_crossing} zone${fatigue.timezone_crossing === 1 ? "" : "s"}`,
+        fatigue.note
+      )
+    );
+
+    cards.push(
+      signalCard(
+        "Coaching Tenure",
+        "none",
+        (coach_tenure.away
+          ? `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${Util.escapeHtml(coach_tenure.away.coach_name)} (${coach_tenure.away.games_with_team}g)</span></div>`
+          : `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span class="text-faint">-</span></div>`) +
+          (coach_tenure.home
+            ? `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${Util.escapeHtml(coach_tenure.home.coach_name)} (${coach_tenure.home.games_with_team}g)</span></div>`
+            : `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span class="text-faint">-</span></div>`),
+        coach_tenure.note
+      )
+    );
+
+    cards.push(
+      signalCard(
+        "Matchup Type",
+        "none",
+        divisional.applies ? `Divisional game` : `Non-divisional`,
+        divisional.note
+      )
+    );
+
+    cards.push(
+      signalCard(
+        "Draft Capital (Rd 1-3, '22-'25)",
+        "inconclusive",
+        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${draft_capital.away ?? "-"} picks</span></div>` +
+          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${draft_capital.home ?? "-"} picks</span></div>`,
+        draft_capital.note
+      )
+    );
+
+    cards.push(
+      signalCard("Referee", "untested", referee.name ? Util.escapeHtml(referee.name) : "-", referee.note)
+    );
+
+    signalsWrap.innerHTML = cards.join("");
   }
 
   const STAT_ROWS = [
@@ -172,15 +258,20 @@
     return `<td class="num">${fmt(stat.get(teamStats || {}))}</td>`;
   }
 
-  function renderCompare(detail) {
+  // Condensed to 3 columns (Stat / Away / Home) instead of always showing
+  // both "to date" and "full season" side by side -- the view toggle in
+  // game.html switches which scope is displayed instead of doubling the
+  // table width to show both at once.
+  function renderCompare(detail, view) {
+    const awayStats = view === "full_season" ? detail.away.full_season : detail.away.season_to_date;
+    const homeStats = view === "full_season" ? detail.home.full_season : detail.home.season_to_date;
+
     const rows = STAT_ROWS.map(
       (stat) => `
         <tr>
           <td>${stat.label}</td>
-          ${cell(stat, detail.away.season_to_date)}
-          ${cell(stat, detail.away.full_season)}
-          ${cell(stat, detail.home.season_to_date)}
-          ${cell(stat, detail.home.full_season)}
+          ${cell(stat, awayStats)}
+          ${cell(stat, homeStats)}
         </tr>
       `
     ).join("");
@@ -190,13 +281,8 @@
         <thead>
           <tr>
             <th>Stat</th>
-            <th class="num" colspan="2">${Util.escapeHtml(detail.away.team)} (away)</th>
-            <th class="num" colspan="2">${Util.escapeHtml(detail.home.team)} (home)</th>
-          </tr>
-          <tr>
-            <th></th>
-            <th class="num">To date</th><th class="num">Full season</th>
-            <th class="num">To date</th><th class="num">Full season</th>
+            <th class="num">${Util.escapeHtml(detail.away.team)} (away)</th>
+            <th class="num">${Util.escapeHtml(detail.home.team)} (home)</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -249,13 +335,24 @@
     return;
   }
 
+  const compareToggle = document.getElementById("compare-toggle");
+  let compareView = "to_date";
+
   try {
     const detail = await Data.getGameDetail(gameId);
     renderSummary(detail.game, detail.team_names || {});
     renderModel(detail.model, detail.game);
     renderSignals(detail.signals, detail.game);
-    renderCompare(detail);
+    renderCompare(detail, compareView);
     renderH2H(detail, detail.head_to_head);
+
+    compareToggle.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-view]");
+      if (!btn) return;
+      compareView = btn.dataset.view;
+      for (const b of compareToggle.querySelectorAll("button")) b.classList.toggle("active", b === btn);
+      renderCompare(detail, compareView);
+    });
   } catch (err) {
     titleEl.textContent = "Couldn't load game";
     subtitleEl.textContent = "";

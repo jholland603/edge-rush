@@ -904,17 +904,135 @@ function teamFatigueFacts(recentGames, restDays, isHomeThisGame) {
   };
 }
 
+// QB status -- the strongest VALIDATED signal in the whole project (Phase 1
+// backtest: ~3.8-point effect, real, matches independent public research --
+// see backtest/phase1_results.md), currently baked invisibly into the
+// model's one combined number. Broken out here as its own fact. "Established
+// starter" = the mode of a team's last 8 starts strictly before this game
+// (same definition as weekly_update.py's established_starters()). For a
+// game already played, the actual starter comes straight off
+// game.home_qb_id/away_qb_id. For a game that hasn't been played yet (those
+// columns are NULL), falls back to the same forward-looking check
+// weekly_update.py uses: is the established starter listed "Out" on this
+// week's injury report?
+async function getTeamQbInfo(DB, team, season, week, actualQbId) {
+  const { results } = await DB.prepare(
+    `
+    WITH tg AS (
+      SELECT season, week, home_qb_id AS qb_id FROM game WHERE home_team = ? AND home_qb_id IS NOT NULL
+      UNION ALL
+      SELECT season, week, away_qb_id AS qb_id FROM game WHERE away_team = ? AND away_qb_id IS NOT NULL
+    )
+    SELECT qb_id FROM tg WHERE season < ? OR (season = ? AND week < ?)
+    ORDER BY season DESC, week DESC LIMIT 8
+    `
+  )
+    .bind(team, team, season, season, week)
+    .all();
+
+  const qbIds = results.map((r) => r.qb_id);
+  if (!qbIds.length) {
+    return { established_qb_id: null, actual_qb_id: actualQbId || null, changed: null, source: "no_history" };
+  }
+  const counts = {};
+  for (const id of qbIds) counts[id] = (counts[id] || 0) + 1;
+  const established = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+
+  if (actualQbId) {
+    return { established_qb_id: established, actual_qb_id: actualQbId, changed: actualQbId !== established, source: "actual" };
+  }
+
+  const inj = await DB.prepare(
+    `SELECT report_status FROM injury_report
+     WHERE team = ? AND player_id = ? AND season = ? AND week = ?
+     ORDER BY date_modified DESC LIMIT 1`
+  )
+    .bind(team, established, season, week)
+    .first();
+  const establishedOut = !!(inj && inj.report_status === "Out");
+  return {
+    established_qb_id: established,
+    actual_qb_id: establishedOut ? null : established,
+    changed: establishedOut,
+    source: "inferred_from_injury_report",
+  };
+}
+
+async function playerNamesById(DB, ids) {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (!unique.length) return {};
+  const { results } = await DB.prepare(
+    `SELECT player_id, display_name FROM player WHERE player_id IN (${unique.map(() => "?").join(",")})`
+  )
+    .bind(...unique)
+    .all();
+  const map = {};
+  for (const r of results) map[r.player_id] = r.display_name;
+  return map;
+}
+
+// Coaching tenure -- Task #27's sniff test (HANDOFF.md): raw scoring margin
+// trends cleanly with the tenure gap, but the ATS margin does NOT -- the
+// market already seems to price in whatever tenure is a proxy for. Shown as
+// a fact with that finding attached, not as a pick.
+async function getCoachTenure(DB, gameId) {
+  const { results } = await DB.prepare(
+    `SELECT ct.team, ct.tenure_games_before, c.name AS coach_name
+     FROM coach_tenure ct JOIN coach c ON c.coach_id = ct.coach_id
+     WHERE ct.game_id = ?`
+  )
+    .bind(gameId)
+    .all();
+  const byTeam = {};
+  for (const r of results) byTeam[r.team] = { games_with_team: r.tenure_games_before, coach_name: r.coach_name };
+  return byTeam;
+}
+
+// Draft capital -- Task #28, a coarse stopgap (round 1-3 picks, last 4
+// drafts, pick COUNT not pick VALUE) that sniff-tested inconclusive on one
+// season of data, not a negative finding, just underpowered. See HANDOFF.md.
+async function getDraftCapital(DB, homeTeam, awayTeam) {
+  const { results } = await DB.prepare(
+    `SELECT team, picks_rounds123_2022_2025 FROM draft_capital_recent WHERE team IN (?, ?)`
+  )
+    .bind(homeTeam, awayTeam)
+    .all();
+  const map = {};
+  for (const r of results) map[r.team] = r.picks_rounds123_2022_2025;
+  return map;
+}
+
+async function getRefereeName(DB, refereeId) {
+  if (!refereeId) return null;
+  const row = await DB.prepare(`SELECT name FROM referee WHERE referee_id = ?`).bind(refereeId).first();
+  return row ? row.name : null;
+}
+
 async function getGameSituationalSignals(DB, game) {
   const bigHomeDogApplies = game.spread_line !== null && game.spread_line <= -7;
 
-  const [homeRecent, awayRecent] = await Promise.all([
+  const [homeRecent, awayRecent, homeQb, awayQb, coachTenure, draftCapital, refereeName] = await Promise.all([
     getTeamRecentGames(DB, game.home_team, game.season, game.week),
     getTeamRecentGames(DB, game.away_team, game.season, game.week),
+    getTeamQbInfo(DB, game.home_team, game.season, game.week, game.home_qb_id),
+    getTeamQbInfo(DB, game.away_team, game.season, game.week, game.away_qb_id),
+    getCoachTenure(DB, game.game_id),
+    getDraftCapital(DB, game.home_team, game.away_team),
+    getRefereeName(DB, game.referee_id),
   ]);
 
   const homeTz = TEAM_TZ_OFFSET[game.home_team];
   const awayTz = TEAM_TZ_OFFSET[game.away_team];
   const timezoneCrossing = homeTz !== undefined && awayTz !== undefined ? Math.abs(homeTz - awayTz) : null;
+
+  const qbNames = await playerNamesById(DB, [
+    homeQb.established_qb_id, homeQb.actual_qb_id, awayQb.established_qb_id, awayQb.actual_qb_id,
+  ]);
+  const withNames = (qb) => ({
+    ...qb,
+    established_qb_name: qbNames[qb.established_qb_id] || null,
+    actual_qb_name: qb.actual_qb_id ? qbNames[qb.actual_qb_id] || null : null,
+  });
 
   return {
     big_home_dog: {
@@ -927,6 +1045,29 @@ async function getGameSituationalSignals(DB, game) {
       away: teamFatigueFacts(awayRecent, game.away_rest, false),
       timezone_crossing: timezoneCrossing,
       note: "Tested against 27 years of history (rest, road streaks, coming off OT, timezone crossing) -- none showed a real predictive edge on their own. Shown here as context only, not a pick.",
+    },
+    qb_status: {
+      home: withNames(homeQb),
+      away: withNames(awayQb),
+      note: "Tested and real: a team starting a QB other than its established starter (mode of last 8 starts) is worth ~3.8 points, matches independent public research. The one signal here that's actually baked into the model's own prediction above.",
+    },
+    coach_tenure: {
+      home: coachTenure[game.home_team] || null,
+      away: coachTenure[game.away_team] || null,
+      note: "Tested: raw scoring margin trends with the tenure gap, but the ATS margin does not -- the market already seems to price in what tenure is a proxy for. Not a betting signal on its own.",
+    },
+    divisional: {
+      applies: !!game.div_game,
+      note: "Tested: divisional games run ~0.85 pts under non-divisional on average (avg O/U margin +0.17 vs +1.02) and see slightly fewer home covers (47.6% vs 49.9%). Modest, a total lean more than a side pick.",
+    },
+    draft_capital: {
+      home: draftCapital[game.home_team] ?? null,
+      away: draftCapital[game.away_team] ?? null,
+      note: "Inconclusive, not negative -- round 1-3 picks over the last 4 drafts (a crude pick-COUNT proxy, not pick-value), sniff-tested on one season with no usable trend. Underpowered, not disproven.",
+    },
+    referee: {
+      name: refereeName,
+      note: "Not tested at all -- no backtest has been run comparing referees to any outcome. Shown purely as a fact.",
     },
   };
 }
@@ -943,7 +1084,7 @@ async function getGameDetail(DB, gameId) {
     SELECT g.game_id, g.season, g.week, g.game_type_code AS game_type, g.gameday, g.weekday, g.gametime,
            g.home_team, g.away_team, g.home_score, g.away_score, g.result, g.total, g.overtime,
            g.home_rest, g.away_rest, g.div_game, g.roof, g.surface, g.temp, g.wind,
-           g.home_qb_id, g.away_qb_id, g.stadium_id,
+           g.home_qb_id, g.away_qb_id, g.stadium_id, g.referee_id,
            g.spread_line, g.home_spread_odds, g.away_spread_odds, g.total_line,
            g.over_odds, g.under_odds, g.home_moneyline, g.away_moneyline,
            wf.forecast_temp, wf.forecast_wind, wf.forecast_precip_prob, wf.fetched_at AS forecast_fetched_at

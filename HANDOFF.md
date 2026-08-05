@@ -1475,3 +1475,65 @@ closer to Week 1.
   shown with the negative finding attached.
 - **Needs a Worker redeploy** (`/game/:gameId`'s new `signals` field) —
   `site/` push covers the rest, including the `signals.html` deletion.
+
+## Situational signals expanded to every available data point, redesigned as compact cards
+
+Same session, two more asks: show every situational signal the data
+supports, "regardless of how it tracked" (not just the two/six already
+there), and condense both Situational Signals and Team Comparison — Jeff
+said both were taking up too much real estate, open to a "more dashboard
+style" layout.
+
+- **Five new signal categories** in `getGameSituationalSignals`
+  (`worker/src/index.js`), each with a `note` stating exactly what testing
+  found so nothing shown reads as more proven than it is:
+  - **QB status** — the single most important addition. Phase 1's backtest
+    already found QB availability real (~3.8 pts, matches independent
+    research) but it was only ever baked invisibly into the model's one
+    combined number. Now broken out per team: `getTeamQbInfo` finds each
+    team's "established starter" (mode of last 8 starts strictly before
+    this game, same definition `weekly_update.py` uses), compares it to the
+    actual starter (`game.home_qb_id`/`away_qb_id` if the game's been
+    played) or, for a future game where that's still NULL, infers it from
+    whether the established starter is listed "Out" on that week's
+    `injury_report` — same forward-looking fallback `weekly_update.py`
+    already relies on. Verified end-to-end against a real game
+    (`2024_18_BUF_NE`, a Week 18 finale): correctly caught BUF benching Josh
+    Allen for Mitchell Trubisky and NE benching Drake Maye for Joe Milton
+    III — both real, correctly-detected QB changes.
+  - **Coaching tenure** — reused the `coach_tenure` D1 view built earlier
+    this project (Task #27's original preliminary sniff test): raw margin
+    trends with the tenure gap, ATS does not, so shown as a fact with that
+    caveat, not a pick.
+  - **Divisional / total lean** — the modest, already-known `/trends`
+    finding (divisional games run ~0.85 pts under, home covers less often),
+    now surfaced per-game via `game.div_game` instead of only living on the
+    Trends page.
+  - **Draft capital** — reused the `draft_capital_recent` table (Task #28's
+    coarse round 1-3 pick-count stopgap), labeled inconclusive/underpowered,
+    not disproven.
+  - **Referee** — pure fact, explicitly labeled "not tested at all." First
+    signal on the page with zero backtesting behind it, shown anyway since
+    Jeff wants full visibility regardless of tested status.
+  - `game.referee_id` added to `getGameDetail`'s SELECT (wasn't fetched
+    before); `coach_tenure`/`draft_capital_recent`/`referee`/`injury_report`
+    all already existed in D1 from earlier sessions, no new tables needed.
+- **Redesigned as compact dashboard cards, not tables/prose.** New CSS
+  (`.signals-grid`, `.signal-card`, `.status-dot`, `.signals-legend`,
+  `.view-toggle`) replaces the old fatigue table + paragraphs with a grid of
+  small tiles — title, a colored status dot (real / no-signal / inconclusive
+  / untested, legend above the grid explains once instead of repeating per
+  card), compact value line(s), and a collapsed `<details>` for the full
+  explanation instead of always-visible prose. 9 cards total: Big Home Dog,
+  QB Status, Rest, Road Trip, Coming Off OT, Timezone Crossing, Coaching
+  Tenure, Matchup Type, Draft Capital, Referee.
+- **Team Comparison condensed from 4 columns to 2** (`.view-toggle`
+  buttons: "To date" / "Full season") instead of always showing both scopes
+  side by side — `renderCompare(detail, view)` in `page-game.js` re-renders
+  from already-fetched data on toggle click, no refetch.
+- Verified the new backend logic with a full mock `/game/:gameId` fetch
+  (`node`, not committed) covering every new query path, cross-checked
+  against real D1 values pulled directly (coach names/tenure, draft capital
+  counts, QB display names, referee name) before trusting the mock.
+- **Needs a Worker redeploy** for the expanded `signals` block —
+  `site/` push covers the card/toggle UI.

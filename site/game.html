@@ -24,12 +24,21 @@
 
   <h2>Situational signals</h2>
   <p class="section-intro">Every situational data point for this game, shown regardless of whether it tested out
-    as predictive &mdash; each one is labeled with what the testing actually found. See
-    <a href="trends.html">Trends</a> for the full historical backtests behind these.</p>
-  <div id="signals-wrap"></div>
+    as predictive. The dot on each card says what the testing found &mdash; see the legend below. Full backtests:
+    <a href="trends.html">Trends</a> and <code>HANDOFF.md</code>.</p>
+  <div class="signals-legend">
+    <span><i class="status-dot real"></i> Tested, real signal</span>
+    <span><i class="status-dot none"></i> Tested, no signal found</span>
+    <span><i class="status-dot inconclusive"></i> Tested, inconclusive</span>
+    <span><i class="status-dot untested"></i> Not tested</span>
+  </div>
+  <div class="signals-grid" id="signals-wrap"></div>
 
   <h2>Team comparison</h2>
-  <p class="section-intro">"To date" is each team's stats entering this game (regular-season games earlier in the same season only). "Full season" is the complete season total, including games after this one if it's already been played.</p>
+  <div class="view-toggle" id="compare-toggle">
+    <button type="button" data-view="to_date" class="active">To date</button>
+    <button type="button" data-view="full_season">Full season</button>
+  </div>
   <div class="table-wrap" id="compare-table-wrap">
     <div class="loading">Loading&hellip;</div>
   </div>
