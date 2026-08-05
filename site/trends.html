@@ -31,6 +31,83 @@
   <h2>Divisional games</h2>
   <p class="text-faint">Division matchups vs. everything else &mdash; ATS (home cover %) and total (over/under).</p>
   <div class="table-wrap" id="divisional-wrap"><div class="loading">Loading&hellip;</div></div>
+
+  <h2>Build your own query</h2>
+  <p class="text-faint">Test a specific angle against the spread, e.g. "divisional road underdogs in November coming
+    off a blowout loss since 2005." Every field is optional &mdash; leave a field at "Any" to ignore it. Full
+    1999&ndash;present history, computed live, not pre-baked.</p>
+
+  <form id="query-form" class="controls">
+    <div class="control">
+      <label for="q-role">Role</label>
+      <select id="q-role">
+        <option value="any">Any</option>
+        <option value="home">Home</option>
+        <option value="away">Away</option>
+      </select>
+    </div>
+    <div class="control">
+      <label for="q-side">Favorite / underdog</label>
+      <select id="q-side">
+        <option value="any">Any</option>
+        <option value="favorite">Favorite</option>
+        <option value="underdog">Underdog</option>
+      </select>
+    </div>
+    <div class="control">
+      <label for="q-min-points">Min spread (pts)</label>
+      <input type="number" id="q-min-points" step="0.5" min="0" placeholder="e.g. 3">
+    </div>
+    <div class="control">
+      <label for="q-max-points">Max spread (pts)</label>
+      <input type="number" id="q-max-points" step="0.5" min="0" placeholder="e.g. 7">
+    </div>
+    <div class="control">
+      <label for="q-divisional">Divisional game</label>
+      <select id="q-divisional">
+        <option value="any">Any</option>
+        <option value="yes">Yes</option>
+        <option value="no">No</option>
+      </select>
+    </div>
+    <div class="control">
+      <label for="q-month">Month</label>
+      <select id="q-month">
+        <option value="any">Any</option>
+        <option value="9">September</option>
+        <option value="10">October</option>
+        <option value="11">November</option>
+        <option value="12">December</option>
+        <option value="1">January</option>
+        <option value="2">February</option>
+      </select>
+    </div>
+    <div class="control">
+      <label for="q-season-from">Since season</label>
+      <input type="number" id="q-season-from" min="1999" max="2026" placeholder="1999">
+    </div>
+    <div class="control">
+      <label for="q-season-to">Through season</label>
+      <input type="number" id="q-season-to" min="1999" max="2026" placeholder="2026">
+    </div>
+    <div class="control">
+      <label for="q-prior-result">Coming off a...</label>
+      <select id="q-prior-result">
+        <option value="any">Any (no filter)</option>
+        <option value="loss">Loss</option>
+        <option value="win">Win</option>
+      </select>
+    </div>
+    <div class="control">
+      <label for="q-prior-margin">...by at least (pts)</label>
+      <input type="number" id="q-prior-margin" min="0" step="1" placeholder="e.g. 14">
+    </div>
+    <div class="control" style="align-self:flex-end;">
+      <button type="submit" class="btn">Run query</button>
+    </div>
+  </form>
+
+  <div class="table-wrap" id="query-result-wrap"></div>
 </main>
 
 <site-footer></site-footer>

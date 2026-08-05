@@ -1046,6 +1046,47 @@ shows full names instead of abbreviations, same reasoning.
   games). Still needs the same walk-forward backtest before going into
   `weekly_update.py` — same bash blocker as those two.
 
+## Task #27 (big-home-dog flag) tested — signal is real but doesn't survive being folded into the model as-is
+
+Bash was available this session, so this got the walk-forward test it was
+waiting on: `scripts/backtest_v4_homedog.py` (new, reuses every function
+from `backtest_v2.py` unchanged — same ratings, same leak-free walk-forward
+refit, same scoring — the only change is one added binary feature,
+`big_home_dog = 1 if spread_line <= -7 else 0`, appended to `FEATURES`).
+Output: `backtest/backtest_v4_out/summary_v4.json` + `predictions_v4.csv`.
+
+- **The raw signal replicates.** Restricted to this script's
+  walk-forward-eligible population (REG season only, 2002-2025, vs. the
+  original `/trends` sniff test's full 1999-present incl. playoffs), home
+  dogs of 7+ points still cover **54.1%** (n=394) vs. **48.6%** for
+  everything else — consistent with the original 55.8% (n=521) finding from
+  a meaningfully different sample window. Two overlapping-but-different
+  slices agreeing is real evidence, not a fluke of one particular cut.
+- **But adding it as a linear-regression feature made the model worse, not
+  better.** `overall_hit_rate` dropped from v2's 0.5126 to **0.5093**, and —
+  the more damning number — of the 3,601 games the v4 model actually
+  flagged, the 200 that were big-home-dog games hit at only **47.5%**,
+  *worse* than the 51.1% the other 3,401 flagged games hit at. The
+  regression's own coefficient on `big_home_dog` came back **-10.0**
+  (pushing predicted home margin *down* for big home dogs, the opposite
+  direction of "they outperform their spread"), because the linear model is
+  fitting the feature jointly with `pass_edge`/`rush_edge`, which already
+  partly explain *why* a team is a 7+ point home dog (they're genuinely
+  worse) — the naive additive combination doesn't isolate the standalone
+  market-inefficiency effect, it tangles it up with team-quality and the
+  ±2-point edge threshold ends up selecting a different, non-representative
+  200-game subset of the 394 rather than capturing the clean effect.
+- **Conclusion, followed through on the project's own rigor rule:** this is
+  a real signal that does not currently belong in `weekly_update.py`. The
+  linear-regression-feature approach that worked (sort of) for QB
+  availability doesn't work here — same "be skeptical of good results"
+  standard applies to promising *methods*, not just promising raw findings.
+  **Not shipped.** If revisited: test it as an independent override/second
+  tier of pick (bet the big-home-dog rule directly, tracked separately from
+  the EPA-model's own edge-threshold picks) rather than one more OLS
+  regressor — that was out of scope for this session, flagging as the next
+  concrete step rather than doing it speculatively.
+
 ## Playoff-round week labels (games.html)
 
 - `game_type_code` already encodes the round for weeks 19-22 (`WC`, `DIV`,
@@ -1250,3 +1291,92 @@ shows full names instead of abbreviations, same reasoning.
   `page-players.js`, `players.html`, `style.css`) — no Worker routes
   touched, no redeploy needed for this part specifically (independent of
   the `/picks/season` redeploy noted above), just push `site/`.
+
+## Situational fatigue score — tested, no signal (not built as a feature)
+
+Jeff asked to explore a "fatigue score" idea (timezone travel, consecutive
+road games, coming off overtime, short rest, combined into one 1-10 rating
+to shave points off a team's power rating). Sniff-tested each ingredient
+directly against D1 the same way the home-dog/rest/divisional trends were
+tested (`SELECT ... GROUP BY bucket` over the full team-game history, ATS
+cover % per bucket) before building anything:
+
+- **Consecutive road games** (gaps-and-islands window-function query,
+  counting a team's Nth straight true road game): 3+ straight road games
+  covered 51.0% (n=1,555) vs. 50.9% for 1-2 straight (n=5,721). No gap.
+- **Coming off overtime** (`LAG(overtime)` per team): 49.9% (n=883) vs.
+  50.0% coming off a non-OT game (n=13,634). No gap.
+- **Timezone crossing** (hardcoded team-home-timezone lookup, `ABS(away
+  team's zone − home team's zone)`, away-team cover % only since they're the
+  ones traveling): 51.6% / 50.9% / 47.9% / 52.6% for 0/1/2/3-zone crossings
+  — not monotonic, no clean trend, same shape as the earlier rest-advantage
+  finding in the Situational Trends section above.
+- **Rest-days buckets** (re-tested, same non-monotonic shape as the
+  home_rest−away_rest version already in `/trends`): short week 49.9%,
+  normal 49.1%, extra rest 50.0%, bye/10+ days 50.6%.
+
+**Conclusion, per the project's own "be skeptical of good results" rule:**
+none of the four ingredients individually clear the ~52.4% breakeven line
+or show a real trend, all four sit within a point or two of a coin flip.
+Combining several zero-signal ingredients into one composite score doesn't
+manufacture a signal — it just adds researcher-degrees-of-freedom (picking
+weights that happen to fit this dataset) without evidence any of them
+matter. **Not built into `weekly_update.py` or the site.** This is a real,
+tested negative result, not a "didn't get to it" — the same category as the
+draft-capital sniff test, but cleaner (full 1999-2025 sample here vs. one
+season for draft capital). Documented so nobody re-derives this from
+scratch next season assuming fatigue "must" matter. If revisited, the
+timezone-offset lookup is the one component that's a coarse proxy (hardcoded
+by team, ignores relocations pre-move and DST) and worth redoing properly
+off `stadium.latitude/longitude` first, in case that's why it showed no
+effect — but the other three ingredients used exact data and still came back
+flat, so this is unlikely to change the conclusion.
+
+## Historical trend query engine (`/trends/query`) — built
+
+Jeff asked for a free-form version of the Situational Trends page: instead
+of three fixed buckets, type a specific angle (role, favorite/underdog,
+point range, divisional, month, season range, "coming off a win/loss by at
+least N points") and get back n/covers/non-covers/pushes/cover % for that
+exact slice, computed live off `game` — no new tables, no pre-baked buckets.
+
+- **New Worker route** `GET /trends/query?role=&side=&divisional=&month=&
+  season_from=&season_to=&min_points=&max_points=&prior_result=&
+  prior_min_margin=` (`getTrendsQuery` in `worker/src/index.js`, right after
+  `getTrends`). Built on a "team-perspective" CTE — `game` unioned into one
+  row per team per game (home and away both normalized to `team`/
+  `opponent`/`team_margin`/`team_spread`), so the same WHERE clause covers
+  either role — plus a `LAG(team_margin) OVER (PARTITION BY team ORDER BY
+  season, week)` window function for the "coming off a blowout" filter.
+  Every enum param (`role`/`side`/`divisional`/`prior_result`) is checked
+  against a fixed whitelist and falls back to "any" if it doesn't match;
+  every numeric param is `Number()`-coerced and bound as a `?` parameter —
+  no request value ever becomes raw SQL text, same discipline the code
+  comments already call out for `/leaders/*`. Verified directly against D1
+  before wiring into the Worker (confirmed `spread_line` sign convention
+  first: positive = home favored, e.g. MIA 70-20 blowout win had
+  `spread_line=6`) and the worked example from Jeff's brainstorm doc
+  (divisional road underdogs, November, since 2005, coming off a 10+ point
+  loss) returns n=94, 59.1% cover — small sample, correctly flagged as such
+  by the UI, but the mechanism works end-to-end.
+- Also unit-tested the route handler itself with a mocked D1 binding
+  (`node` script, not committed — just confirmed placeholder-count-matches-
+  binds-count for 4 different filter combinations, including the malformed
+  `month=13` case returning 400) before trusting it.
+- **New site section**: `trends.html` gained a "Build your own query" form
+  (`.controls`/`.control` pattern reused from `leaders.html`) and
+  `page-trends.js` gained the submit handler + `describeFilters()` (renders
+  the applied filters back in plain English) + a small-sample warning
+  (`n < 100`) that echoes the project's own "be skeptical of good results"
+  rule directly in the UI, not just in HANDOFF.md. `Data.getTrendsQuery()`
+  added to `data.js` — deliberately **not** cached (`_cache`) since every
+  filter combination is a distinct query, caching would only grow memory
+  for no reuse benefit.
+- CSS: added `input[type="number"]` to the shared form-control styling
+  (previously only `select`/`text`/`search` inputs were styled) and a
+  `button.btn` rule (`.btn` previously only used on `<a>` tags) —
+  `style.css`.
+- **Needs a Worker redeploy** (`wrangler deploy` from `worker/`, same as
+  every other Worker-side change this project makes) before `/trends/query`
+  is live — the site-side pieces (`trends.html`/`page-trends.js`/
+  `data.js`/`style.css`) just need `site/` pushed, no build step.

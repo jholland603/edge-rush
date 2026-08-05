@@ -32,6 +32,19 @@
  *   /trends                             -- situational ATS trends (home dogs by size,
  *                                           rest-advantage buckets, divisional vs. not),
  *                                           full 1999-present history, used by trends.html
+ *   /trends/query?role=&side=&divisional=&month=&season_from=&season_to=
+ *                &min_points=&max_points=&prior_result=&prior_min_margin=
+ *                                        -- free-form ATS backtest: pick a role
+ *                                           (home/away/any), favorite/underdog, a spread-size
+ *                                           range, divisional yes/no, a calendar month, a
+ *                                           season range, and optionally "coming off a
+ *                                           win/loss by at least N points" -- returns n /
+ *                                           covers / non_covers / cover_pct for that exact
+ *                                           slice, full 1999-present history. Every filter
+ *                                           value is validated against a whitelist or coerced
+ *                                           to a number server-side before being used, same
+ *                                           no-injection-surface discipline as /leaders/*.
+ *                                           Used by trends.html's query-builder section.
  *   /leaders/catalog                    -- available leaderboard categories (players + teams)
  *   /leaders/players?stat=&from=&to=&position=&limit=
  *                                        -- top players by summed stat over a season range
@@ -144,6 +157,11 @@ export default {
 
       if (path === "/trends") {
         return json(await getTrends(DB));
+      }
+      if (path === "/trends/query") {
+        const result = await getTrendsQuery(DB, url.searchParams);
+        if (result === null) return json({ error: "invalid filter value" }, 400);
+        return json(result);
       }
 
       if (path === "/leaders/catalog") {
@@ -985,6 +1003,124 @@ async function getTrends(DB) {
     home_dogs_by_size: homeDogsBySize.results,
     rest_edge: restEdge.results,
     divisional: divisional.results,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// /trends/query -- the free-form historical trend backtester ("how do
+// divisional road underdogs perform in November coming off a blowout loss
+// since 2005" style questions). Built on a team-perspective CTE (one row per
+// team per game, home and away both normalized to "team"/"opponent" so the
+// same WHERE clause works regardless of role) plus a LAG() window function
+// for the "coming off a win/loss of at least N points" filter. Every enum
+// param is checked against a fixed whitelist (falls back to "any"/ignored,
+// never interpolated raw), and every numeric param is coerced with Number()
+// and bound as a query parameter -- no request value ever becomes part of
+// the SQL text itself, same discipline as /leaders/*'s catalog lookups.
+// Returns null (-> 400) only for a genuinely malformed month value.
+// ---------------------------------------------------------------------------
+async function getTrendsQuery(DB, searchParams) {
+  const role = ["home", "away"].includes(searchParams.get("role")) ? searchParams.get("role") : "any";
+  const side = ["favorite", "underdog"].includes(searchParams.get("side")) ? searchParams.get("side") : "any";
+  const divisional = ["yes", "no"].includes(searchParams.get("divisional")) ? searchParams.get("divisional") : "any";
+  const priorResult = ["win", "loss"].includes(searchParams.get("prior_result")) ? searchParams.get("prior_result") : "any";
+
+  const monthRaw = searchParams.get("month");
+  let month = null;
+  if (monthRaw && monthRaw !== "any") {
+    const n = Number(monthRaw);
+    if (!Number.isInteger(n) || n < 1 || n > 12) return null;
+    month = n;
+  }
+
+  const seasonFrom = Number(searchParams.get("season_from")) || 1999;
+  const seasonTo = Number(searchParams.get("season_to")) || 2100;
+
+  const minPointsRaw = searchParams.get("min_points");
+  const maxPointsRaw = searchParams.get("max_points");
+  const minPoints = minPointsRaw !== null && minPointsRaw !== "" && !Number.isNaN(Number(minPointsRaw)) ? Number(minPointsRaw) : null;
+  const maxPoints = maxPointsRaw !== null && maxPointsRaw !== "" && !Number.isNaN(Number(maxPointsRaw)) ? Number(maxPointsRaw) : null;
+
+  const priorMinMarginRaw = searchParams.get("prior_min_margin");
+  const priorMinMargin = priorMinMarginRaw !== null && priorMinMarginRaw !== "" && !Number.isNaN(Number(priorMinMarginRaw))
+    ? Math.abs(Number(priorMinMarginRaw))
+    : 0;
+
+  const conditions = ["season BETWEEN ? AND ?"];
+  const binds = [seasonFrom, seasonTo];
+
+  if (role === "home") conditions.push("is_home = 1");
+  if (role === "away") conditions.push("is_home = 0");
+  if (side === "favorite") conditions.push("team_spread > 0");
+  if (side === "underdog") conditions.push("team_spread < 0");
+  if (divisional === "yes") conditions.push("div_game = 1");
+  if (divisional === "no") conditions.push("div_game = 0");
+  if (month !== null) {
+    conditions.push("CAST(substr(gameday, 6, 2) AS INTEGER) = ?");
+    binds.push(month);
+  }
+  if (minPoints !== null) {
+    conditions.push("ABS(team_spread) >= ?");
+    binds.push(minPoints);
+  }
+  if (maxPoints !== null) {
+    conditions.push("ABS(team_spread) <= ?");
+    binds.push(maxPoints);
+  }
+  if (priorResult === "loss") {
+    conditions.push("prior_margin IS NOT NULL AND prior_margin <= ?");
+    binds.push(-priorMinMargin);
+  }
+  if (priorResult === "win") {
+    conditions.push("prior_margin IS NOT NULL AND prior_margin >= ?");
+    binds.push(priorMinMargin);
+  }
+
+  const sql = `
+    WITH team_games AS (
+      SELECT g.game_id, g.season, g.week, g.gameday, g.home_team AS team, g.away_team AS opponent, 1 AS is_home,
+             (g.home_score - g.away_score) AS team_margin, g.spread_line AS team_spread, g.div_game
+      FROM game g WHERE g.result IS NOT NULL AND g.spread_line IS NOT NULL AND g.gameday IS NOT NULL
+      UNION ALL
+      SELECT g.game_id, g.season, g.week, g.gameday, g.away_team AS team, g.home_team AS opponent, 0 AS is_home,
+             (g.away_score - g.home_score) AS team_margin, -g.spread_line AS team_spread, g.div_game
+      FROM game g WHERE g.result IS NOT NULL AND g.spread_line IS NOT NULL AND g.gameday IS NOT NULL
+    ),
+    with_prior AS (
+      SELECT *, LAG(team_margin) OVER (PARTITION BY team ORDER BY season, week) AS prior_margin
+      FROM team_games
+    )
+    SELECT
+      COUNT(*) n,
+      SUM(CASE WHEN team_margin - team_spread > 0 THEN 1 ELSE 0 END) covers,
+      SUM(CASE WHEN team_margin - team_spread < 0 THEN 1 ELSE 0 END) non_covers,
+      SUM(CASE WHEN team_margin - team_spread = 0 THEN 1 ELSE 0 END) pushes,
+      ROUND(100.0 * SUM(CASE WHEN team_margin - team_spread > 0 THEN 1 ELSE 0 END) /
+        NULLIF(SUM(CASE WHEN team_margin - team_spread > 0 THEN 1 ELSE 0 END) + SUM(CASE WHEN team_margin - team_spread < 0 THEN 1 ELSE 0 END), 0), 1) AS cover_pct
+    FROM with_prior
+    WHERE ${conditions.join(" AND ")}
+  `;
+
+  const row = await DB.prepare(sql).bind(...binds).first();
+
+  return {
+    filters: {
+      role,
+      side,
+      divisional,
+      month,
+      season_from: seasonFrom,
+      season_to: seasonTo,
+      min_points: minPoints,
+      max_points: maxPoints,
+      prior_result: priorResult,
+      prior_min_margin: priorResult !== "any" ? priorMinMargin : null,
+    },
+    n: row.n || 0,
+    covers: row.covers || 0,
+    non_covers: row.non_covers || 0,
+    pushes: row.pushes || 0,
+    cover_pct: row.cover_pct,
   };
 }
 

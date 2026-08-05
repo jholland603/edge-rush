@@ -72,6 +72,22 @@ const Data = {
 
   getTrends: () => fetchJSON(`${API_BASE}/trends`),
 
+  // Free-form historical trend query -- not cached (each filter combination
+  // is effectively a unique query, caching would just grow _cache forever
+  // for no benefit since nobody re-runs the exact same filter set twice in
+  // one visit).
+  getTrendsQuery: (filters) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters || {})) {
+      if (v !== null && v !== undefined && v !== "") p.set(k, v);
+    }
+    return fetch(`${API_BASE}/trends/query?${p.toString()}`).then(async (res) => {
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || `Failed to load trends query: ${res.status}`);
+      return body;
+    });
+  },
+
   getLeadersCatalog: () => fetchJSON(`${API_BASE}/leaders/catalog`),
 
   getPlayerLeaders: ({ stat, from, to, position, limit, scope }) => {
