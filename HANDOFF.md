@@ -1707,3 +1707,43 @@ screenshot + follow-up:
   renders identically, no runtime errors.
 - Site-only (`game.html`, `page-game.js`, `style.css`) — no Worker
   redeploy needed.
+
+## GitHub Pages stopped deploying — added `.nojekyll`
+
+Jeff reported Pages wasn't picking up pushed changes. Checked the repo's
+Actions tab (`pages-build-deployment`, public run history, no login
+needed): builds #12–#33 all succeeded in 36–59s; #34–#36 (the last three
+pushes) each ran 8–10 minutes and then failed. That duration sits right at
+GitHub's Pages build timeout, and the only thing that changed at the same
+time was this file — HANDOFF.md crossed ~100KB/1700 lines of heavy
+markdown right around #34. Repo has no `.github/workflows`, so Pages was
+running the classic Jekyll build against the whole repo root, which means
+kramdown was rendering HANDOFF.md (and README.md, notes.md, etc.) into
+HTML on every deploy — plausible that a large, structurally complex doc
+pushed kramdown's rendering time over the edge.
+
+Fix: added an empty `.nojekyll` file at the repo root. This tells Pages to
+skip the Jekyll build step entirely and serve the repo's files as static
+assets — removes markdown rendering from the deploy path altogether
+(harmless either way, since nothing in this repo actually needs Jekyll).
+Ruled out other causes first: no Liquid-looking `{{ }}`/`{% %}` syntax
+anywhere in the repo, no symlinks, no invalid filenames, no committed
+`node_modules`/`__pycache__`, GitHub status page clean.
+
+Could not push this commit from the sandbox (no stored GitHub credentials
+there — this repo's commits have been landing via some auto-commit/push
+mechanism outside explicit git calls, tied to the local Windows folder,
+not the Linux sandbox). File is written to the working tree; confirm it
+shows up on `main` and triggers a fresh (fast) deploy.
+
+**Follow-up:** `.nojekyll` fixed the build step (artifact now builds in
+seconds instead of 8-10 min), but deploys #34-37 still failed — the build
+finishes, then the `deploy-pages` action polls `deployment_in_progress`
+until its own internal timeout ("Timeout reached, aborting!") cancels it.
+GitHub status page showed no open incidents, so this looked like a stuck
+Pages *environment* for this repo specifically, not a repo-content issue.
+Jeff reset it via Settings &rarr; Pages: flipped Source to "GitHub Actions"
+then back to "Deploy from a branch" / `main` / `/(root)` (current GitHub
+UI auto-saves on selection, no separate Save button). This edit is the
+trigger commit to test whether that reset actually clears the stuck
+deploy step — watch the next `pages-build-deployment` run.
