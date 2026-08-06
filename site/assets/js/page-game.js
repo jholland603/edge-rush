@@ -128,7 +128,11 @@
     if (higherBetter === null || higherBetter === undefined) return { awayCls: "", homeCls: "" };
     if (typeof awayVal !== "number" || typeof homeVal !== "number" || awayVal === homeVal) return { awayCls: "", homeCls: "" };
     const awayWins = higherBetter ? awayVal > homeVal : awayVal < homeVal;
-    return { awayCls: awayWins ? "text-accent" : "", homeCls: !awayWins ? "text-accent" : "" };
+    // "value-lead" (bold + accent + a leading arrow, see style.css) reads
+    // clearly against the dimmed default -- plain color-only highlighting
+    // (the first version of this) turned out too subtle to notice next to
+    // the rest of the card.
+    return { awayCls: awayWins ? "value-lead" : "", homeCls: !awayWins ? "value-lead" : "" };
   }
 
   // Two stacked "TEAM value" rows (the pattern every signal card already

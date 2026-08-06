@@ -439,6 +439,26 @@ tr.expand-row td {
   justify-content: space-between;
   gap: var(--space-2);
 }
+.signal-card__body .row > span:last-child {
+  color: var(--color-text-dim);
+}
+
+/* Whichever side is ahead on a comparable stat -- deliberately high
+   contrast against the dimmed default (bold, accent color, a leading
+   arrow) so it reads at a glance instead of blending in. Used by both
+   Situational Signal cards and Team Comparison rows via the shared
+   pairHighlight()/pairRows() helpers in page-game.js. */
+.value-lead {
+  color: var(--color-accent) !important;
+  font-weight: 700;
+}
+.value-lead::before {
+  content: "\25B2";
+  font-size: 0.65em;
+  margin-right: 3px;
+  position: relative;
+  top: -1px;
+}
 
 .compare-row {
   display: flex;
@@ -452,10 +472,12 @@ tr.expand-row td {
   color: var(--color-text-dim);
 }
 .compare-row__val {
-  width: 64px;
+  width: 78px;
   text-align: right;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 400;
+  color: var(--color-text-dim);
+  white-space: nowrap;
 }
 .compare-row--header {
   border-bottom: 1px solid var(--color-border);

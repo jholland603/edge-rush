@@ -1650,3 +1650,33 @@ glance:
   — a one-off verification script, same as the `node --check`/mock-fetch
   checks earlier in this file.
 - Site-only change (`page-game.js`) — no Worker redeploy needed.
+
+## The bold-highlight was too subtle — fixed with a stronger visual (still no badge)
+
+Jeff's follow-up: couldn't actually see a difference. Diagnosed as the
+non-badge highlighting (Rest, Road Trip, Draft Capital, Pass Defense
+Allowed, Turnover Margin, Common Opponents, Team Comparison rows) being
+color-only against an already-bright default — `.compare-row__val` was
+`font-weight: 600` for *every* value already, so the "ahead" side only ever
+differed by a text color swap (accent green vs. near-white), which does
+blend in at 0.86rem next to a card that already has other green elements
+(status dots, badges).
+
+- Flipped the contrast the other way: the **default** value color is now
+  dimmed (`--color-text-dim`), and a new `.value-lead` class (accent color,
+  bold, plus a small leading &#9650; arrow via `::before`) is the only thing
+  that gets full brightness — so "ahead" now has to visually fight its way
+  out of a muted baseline instead of one bright color sitting next to
+  another. `pairHighlight()` in `page-game.js` now returns `"value-lead"`
+  instead of `"text-accent"`; `compareRow()` picked up the same change for
+  free since it already called the shared helper.
+- `.compare-row__val` widened 64px &rarr; 78px + `white-space: nowrap` so
+  the arrow prefix doesn't wrap on narrow numbers.
+- Still deliberately **not** a badge — that's still reserved for Big Home
+  Dog/QB Status, the two signals with real backing. This is a stronger
+  version of the same "purely descriptive" visual language, not a
+  promotion to "proven."
+- Re-verified with the same `jsdom` DOM harness as the previous entry:
+  confirmed `value-lead` lands on the correct side for every card (e.g.
+  NE's extra rest day, BUF's passing-stat lead) with no runtime errors.
+- Site-only (`page-game.js`, `style.css`) — no Worker redeploy needed.
