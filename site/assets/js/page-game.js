@@ -99,17 +99,48 @@
     return v ? "Yes" : "No";
   }
 
-  function signalCard(title, status, bodyHtml, note) {
+  // `favorTeam` is only ever set on the two signals this project has
+  // actually tested and found real (Big Home Dog, QB Status) -- it renders
+  // an explicit "Favors <team>" badge. Every other card only ever gets the
+  // neutral bold/accent highlight from pairHighlight() below, never this
+  // badge -- reserving "Favors" language for signals with real backing
+  // keeps it from reading as a claim the untested/no-signal cards can't
+  // support.
+  function signalCard(title, status, bodyHtml, note, favorTeam) {
     return `
       <div class="signal-card">
         <div class="signal-card__title">
           <span>${Util.escapeHtml(title)}</span>
           <span class="status-dot ${status}"></span>
         </div>
+        ${favorTeam ? `<div class="badge positive" style="margin-bottom:6px;">Favors ${Util.escapeHtml(favorTeam)}</div>` : ""}
         <div class="signal-card__body">${bodyHtml}</div>
         ${note ? `<details><summary class="text-faint" style="cursor:pointer; font-size:0.78rem; margin-top:6px;">What this means</summary><p class="text-faint" style="font-size:0.78rem; margin-top:4px;">${Util.escapeHtml(note)}</p></details>` : ""}
       </div>
     `;
+  }
+
+  // Shared bold/accent highlight for a two-value (away/home) comparison --
+  // used both by Situational Signal cards and Team Comparison rows so the
+  // same visual language means the same thing everywhere on this page.
+  // Purely descriptive of which raw number is ahead, never a prediction.
+  function pairHighlight(awayVal, homeVal, higherBetter) {
+    if (higherBetter === null || higherBetter === undefined) return { awayCls: "", homeCls: "" };
+    if (typeof awayVal !== "number" || typeof homeVal !== "number" || awayVal === homeVal) return { awayCls: "", homeCls: "" };
+    const awayWins = higherBetter ? awayVal > homeVal : awayVal < homeVal;
+    return { awayCls: awayWins ? "text-accent" : "", homeCls: !awayWins ? "text-accent" : "" };
+  }
+
+  // Two stacked "TEAM value" rows (the pattern every signal card already
+  // uses), with whichever side is ahead bolded via pairHighlight() -- drop
+  // in replacement for the plain two-`.row` blocks used before.
+  function pairRows(awayTeam, awayVal, homeTeam, homeVal, higherBetter, fmt) {
+    const format = fmt || ((v) => (v === null || v === undefined ? "-" : v));
+    const { awayCls, homeCls } = pairHighlight(awayVal, homeVal, higherBetter);
+    return (
+      `<div class="row"><span>${Util.escapeHtml(awayTeam)}</span><span class="${awayCls}">${format(awayVal)}</span></div>` +
+      `<div class="row"><span>${Util.escapeHtml(homeTeam)}</span><span class="${homeCls}">${format(homeVal)}</span></div>`
+    );
   }
 
   function qbLine(teamAbbr, qb) {
@@ -146,16 +177,28 @@
         big_home_dog.applies
           ? `<strong class="text-accent">Applies</strong> &mdash; ${Util.escapeHtml(g.home_team)} +${Math.abs(g.spread_line).toFixed(1).replace(/\.0$/, "")}`
           : `Doesn't apply`,
-        big_home_dog.note
+        big_home_dog.note,
+        big_home_dog.applies ? g.home_team : null
       )
     );
 
+    // QB change hurts the team that changed (~3.8 pts, tested/real) -- so
+    // the badge only fires when it's a clean one-sided change. Both teams
+    // changing, or neither, is a wash -- no badge, would be asserting
+    // something the finding doesn't actually say.
+    const qbFavor =
+      qb_status.home.changed && !qb_status.away.changed
+        ? g.away_team
+        : qb_status.away.changed && !qb_status.home.changed
+        ? g.home_team
+        : null;
     cards.push(
       signalCard(
         "QB Status",
         "real",
         qbLine(g.away_team, qb_status.away) + qbLine(g.home_team, qb_status.home),
-        qb_status.note
+        qb_status.note,
+        qbFavor
       )
     );
 
@@ -163,8 +206,10 @@
       signalCard(
         "Rest",
         "none",
-        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${fatigue.away.rest_days ?? "-"} days${fatigue.away.short_week ? " (short)" : ""}</span></div>` +
-          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${fatigue.home.rest_days ?? "-"} days${fatigue.home.short_week ? " (short)" : ""}</span></div>`,
+        pairRows(
+          g.away_team, fatigue.away.rest_days, g.home_team, fatigue.home.rest_days, true,
+          (v) => (v === null || v === undefined ? "-" : `${v} days`)
+        ),
         fatigue.note
       )
     );
@@ -173,8 +218,11 @@
       signalCard(
         "Road Trip",
         "none",
-        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${fatigue.away.road_streak_including_this_game} straight</span></div>` +
-          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${fatigue.home.road_streak_including_this_game} straight</span></div>`,
+        pairRows(
+          g.away_team, fatigue.away.road_streak_including_this_game,
+          g.home_team, fatigue.home.road_streak_including_this_game, false,
+          (v) => `${v} straight`
+        ),
         fatigue.note
       )
     );
@@ -183,8 +231,12 @@
       signalCard(
         "Coming Off OT",
         "none",
-        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${yesNo(fatigue.away.coming_off_overtime)}</span></div>` +
-          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${yesNo(fatigue.home.coming_off_overtime)}</span></div>`,
+        pairRows(
+          g.away_team, fatigue.away.coming_off_overtime === null ? null : fatigue.away.coming_off_overtime ? 1 : 0,
+          g.home_team, fatigue.home.coming_off_overtime === null ? null : fatigue.home.coming_off_overtime ? 1 : 0,
+          false,
+          (v) => (v === null || v === undefined ? "-" : v ? "Yes" : "No")
+        ),
         fatigue.note
       )
     );
@@ -227,8 +279,7 @@
       signalCard(
         "Draft Capital (Rd 1-3, '22-'25)",
         "inconclusive",
-        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${draft_capital.away ?? "-"} picks</span></div>` +
-          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${draft_capital.home ?? "-"} picks</span></div>`,
+        pairRows(g.away_team, draft_capital.away, g.home_team, draft_capital.home, true, (v) => (v ?? "-") + " picks"),
         draft_capital.note
       )
     );
@@ -241,8 +292,7 @@
       signalCard(
         "Pass Defense Allowed",
         "untested",
-        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${pass_defense_allowed.away ?? "-"}</span></div>` +
-          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${pass_defense_allowed.home ?? "-"}</span></div>`,
+        pairRows(g.away_team, pass_defense_allowed.away, g.home_team, pass_defense_allowed.home, false),
         pass_defense_allowed.note
       )
     );
@@ -253,8 +303,7 @@
       signalCard(
         "Turnover Margin",
         "untested",
-        `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${awayTO === null ? "-" : Util.signed(awayTO, 0)}</span></div>` +
-          `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${homeTO === null ? "-" : Util.signed(homeTO, 0)}</span></div>`,
+        pairRows(g.away_team, awayTO, g.home_team, homeTO, true, (v) => (v === null || v === undefined ? "-" : Util.signed(v, 0))),
         turnover_margin_note
       )
     );
@@ -265,14 +314,15 @@
 
     const commonOppRows = common_opponents.opponents.length
       ? common_opponents.opponents
-          .map(
-            (o) => `
+          .map((o) => {
+            const { awayCls, homeCls } = pairHighlight(o.away_avg_margin, o.home_avg_margin, true);
+            return `
               <div class="row"><span>vs ${Util.escapeHtml(o.opponent)}</span><span>
-                ${Util.escapeHtml(g.away_team)} ${Util.signed(o.away_avg_margin, 1)}${o.away_games > 1 ? ` (${o.away_games}g)` : ""},
-                ${Util.escapeHtml(g.home_team)} ${Util.signed(o.home_avg_margin, 1)}${o.home_games > 1 ? ` (${o.home_games}g)` : ""}
+                <span class="${awayCls}">${Util.escapeHtml(g.away_team)} ${Util.signed(o.away_avg_margin, 1)}${o.away_games > 1 ? ` (${o.away_games}g)` : ""}</span>,
+                <span class="${homeCls}">${Util.escapeHtml(g.home_team)} ${Util.signed(o.home_avg_margin, 1)}${o.home_games > 1 ? ` (${o.home_games}g)` : ""}</span>
               </span></div>
-            `
-          )
+            `;
+          })
           .join("")
       : `<span class="text-faint">No common opponents played yet this season.</span>`;
     cards.push(signalCard("Common Opponents", "untested", commonOppRows, common_opponents.note));
@@ -333,13 +383,7 @@
     const fmt = stat.fmt || ((v) => (v === null || v === undefined ? "-" : v));
     const awayRaw = stat.get(awayStats || {});
     const homeRaw = stat.get(homeStats || {});
-    let awayCls = "";
-    let homeCls = "";
-    if (stat.higherBetter !== null && typeof awayRaw === "number" && typeof homeRaw === "number" && awayRaw !== homeRaw) {
-      const awayWins = stat.higherBetter ? awayRaw > homeRaw : awayRaw < homeRaw;
-      awayCls = awayWins ? "text-accent" : "";
-      homeCls = !awayWins ? "text-accent" : "";
-    }
+    const { awayCls, homeCls } = pairHighlight(awayRaw, homeRaw, stat.higherBetter);
     return `
       <div class="compare-row">
         <span class="compare-row__label">${Util.escapeHtml(stat.label)}</span>
@@ -347,6 +391,31 @@
         <span class="compare-row__val ${homeCls}">${fmt(homeRaw)}</span>
       </div>
     `;
+  }
+
+  // Per-category roll-up: how many stats in this group is each team ahead
+  // on. "Ahead" language (not "Favors") and a neutral gray badge, on
+  // purpose -- this is a completed-box-score tally, not a tested predictive
+  // signal, and shouldn't visually read the same as the QB Status/Big Home
+  // Dog "Favors" badges above, which do have real backing.
+  function categoryLeaderBadge(group, awayStats, homeStats, awayTeam, homeTeam) {
+    let awayWins = 0;
+    let homeWins = 0;
+    let comparable = 0;
+    for (const stat of group.rows) {
+      const awayRaw = stat.get(awayStats || {});
+      const homeRaw = stat.get(homeStats || {});
+      const { awayCls, homeCls } = pairHighlight(awayRaw, homeRaw, stat.higherBetter);
+      if (!awayCls && !homeCls) continue;
+      comparable++;
+      if (awayCls) awayWins++;
+      else homeWins++;
+    }
+    if (!comparable) return "";
+    if (awayWins === homeWins) return `<div class="badge neutral" style="margin-bottom:6px;">Even (${awayWins}-${homeWins})</div>`;
+    const leader = awayWins > homeWins ? awayTeam : homeTeam;
+    const score = awayWins > homeWins ? `${awayWins}-${homeWins}` : `${homeWins}-${awayWins}`;
+    return `<div class="badge neutral" style="margin-bottom:6px;">Ahead: ${Util.escapeHtml(leader)} (${score})</div>`;
   }
 
   // Condensed into category cards instead of one long table, and to 2 value
@@ -363,6 +432,7 @@
       (group) => `
         <div class="signal-card">
           <div class="signal-card__title"><span>${Util.escapeHtml(group.title)}</span></div>
+          ${categoryLeaderBadge(group, awayStats, homeStats, detail.away.team, detail.home.team)}
           <div class="compare-row compare-row--header">
             <span class="compare-row__label"></span>
             <span class="compare-row__val">${Util.escapeHtml(detail.away.team)}</span>

@@ -1605,3 +1605,48 @@ aren't available from this data source; said so rather than faking it.
   committed) built on real values pulled from D1, cross-checked by hand.
 - **Needs a Worker redeploy** for the four new `signals` fields — `site/`
   push covers the new cards.
+
+## "Favors TEAM" badges — but only where that's actually true (page-game.js, no Worker change)
+
+Jeff asked whether signals highlight which team they favor, and wanted the
+same for Team Comparison. They didn't before (Team Comparison bolded the
+better raw number per stat; the signal cards were purely descriptive text).
+Deliberately split this into two different visual languages instead of one,
+so a viewer can tell "tested and real" apart from "just descriptive" at a
+glance:
+
+- **Green "Favors TEAM" badge** — reserved for the two signals this project
+  has actually tested and found real: **Big Home Dog** (favors the home
+  team when it applies) and **QB Status** (favors whichever team's
+  opponent changed QBs — the ~3.8-pt effect hurts the team that changed, so
+  it benefits the other side). Only fires on a clean one-sided case; if
+  both teams changed QBs or neither did, no badge — asserting a favorite
+  either way would overstate what the finding says.
+- **Bold/accent highlight, no badge, no "favors" language** — added to
+  every other two-sided card that has comparable numbers (Rest, Road Trip,
+  Coming Off OT, Draft Capital, Pass Defense Allowed, Turnover Margin,
+  Common Opponents' per-opponent rows): whichever team's raw number is
+  ahead gets bolded, same visual treatment Team Comparison already used.
+  New shared helpers in `page-game.js`: `pairHighlight(awayVal, homeVal,
+  higherBetter)` (the comparison logic, now used by both Situational
+  Signals and Team Comparison instead of two separate implementations) and
+  `pairRows()` (the two-team-rows markup generator). Coaching Tenure,
+  Timezone Crossing, Matchup Type, Game Slot, and Referee stay unhighlighted
+  — no defensible "better" direction for those.
+- **Team Comparison got a per-category roll-up**: each of the 4 stat-group
+  cards (Passing/Rushing/Defense/Discipline) now shows a gray "Ahead: TEAM
+  (n-m)" or "Even (n-n)" badge — a tally of how many stats in that group
+  each team is winning, via new `categoryLeaderBadge()`. Gray, "Ahead"
+  wording, not green "Favors" — this is a completed-box-score count, not a
+  backtested signal, and shouldn't look like one.
+- **Verified with an actual DOM test**, not just logic review: installed
+  `jsdom` in the sandbox, loaded the real `game.html` + `util.js` +
+  `page-game.js` into a JSDOM window with a mocked `Data.getGameDetail`
+  fixture (realistic values for both teams across every field), ran the
+  page's real bootstrap code, and inspected the rendered HTML. Confirmed
+  zero runtime errors and every badge/highlight landed correctly (e.g. NE's
+  QB change correctly produced "Favors BUF"; BUF's higher passing numbers
+  correctly produced "Ahead: BUF (4-0)" on the Passing card). Not committed
+  — a one-off verification script, same as the `node --check`/mock-fetch
+  checks earlier in this file.
+- Site-only change (`page-game.js`) — no Worker redeploy needed.
