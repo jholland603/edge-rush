@@ -105,13 +105,14 @@
   // neutral bold/accent highlight from pairHighlight() below, never this
   // badge -- reserving "Favors" language for signals with real backing
   // keeps it from reading as a claim the untested/no-signal cards can't
-  // support.
+  // support. `status` is kept as a param (unused visually now -- no more
+  // dot) since call sites already pass it and it's harmless to leave; easy
+  // to bring back if wanted later.
   function signalCard(title, status, bodyHtml, note, favorTeam) {
     return `
       <div class="signal-card">
         <div class="signal-card__title">
           <span>${Util.escapeHtml(title)}</span>
-          <span class="status-dot ${status}"></span>
         </div>
         ${favorTeam ? `<div class="badge positive" style="margin-bottom:6px;">Favors ${Util.escapeHtml(favorTeam)}</div>` : ""}
         <div class="signal-card__body">${bodyHtml}</div>

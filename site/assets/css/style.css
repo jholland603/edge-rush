@@ -491,27 +491,6 @@ tr.expand-row td {
   letter-spacing: 0.03em;
   font-weight: 600;
 }
-.status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.status-dot.real { background: var(--color-accent); }
-.status-dot.none { background: var(--color-text-faint); }
-.status-dot.inconclusive { background: var(--color-warn); }
-.status-dot.untested { background: #6fb7ff; }
-
-.signals-legend {
-  font-size: 0.78rem;
-  color: var(--color-text-dim);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  margin: 0 0 var(--space-4);
-}
-.signals-legend span { display: inline-flex; align-items: center; gap: 6px; }
 
 .view-toggle {
   display: inline-flex;

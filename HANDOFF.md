@@ -1680,3 +1680,30 @@ blend in at 0.86rem next to a card that already has other green elements
   confirmed `value-lead` lands on the correct side for every card (e.g.
   NE's extra rest day, BUF's passing-stat lead) with no runtime errors.
 - Site-only (`page-game.js`, `style.css`) — no Worker redeploy needed.
+
+## Stripped the disclaimer chrome off game.html — this is Jeff's own tool
+
+Jeff: "This site is for me. I don't need these warnings." Removed, per his
+screenshot + follow-up:
+
+- The `.section-intro` paragraph under "Situational signals" (the "shown
+  regardless of whether it tested out as predictive... see the legend
+  below" text).
+- The 4-item status-dot legend (`.signals-legend`) entirely.
+- The status dot itself on every signal card's title (top-right corner) —
+  `signalCard()` in `page-game.js` no longer renders it; `status` is still
+  passed in by every call site but no longer does anything visually (kept
+  the param rather than touching every call site, trivial to revive later
+  if wanted). Dead CSS (`.status-dot*`, `.signals-legend*`) removed too.
+- **Kept, per Jeff's explicit follow-up:** the "Situational signals" `<h2>`
+  label itself.
+- **Left alone (not asked for):** the per-card `<details>`/"What this
+  means" notes — those are collapsed by default, not visible chrome, and
+  the "Favors TEAM"/"Ahead: TEAM" badges from the last two rounds, which
+  are the actual content Jeff asked for, not disclaimer text. The yellow
+  model-prediction banner above this section is also untouched — that's
+  the pick itself, not a warning.
+- Verified with the same `jsdom` harness — dots gone, everything else
+  renders identically, no runtime errors.
+- Site-only (`game.html`, `page-game.js`, `style.css`) — no Worker
+  redeploy needed.
