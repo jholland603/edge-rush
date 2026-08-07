@@ -3,6 +3,29 @@
 Paste this whole file into a new chat, or just point the new Claude at this file
 (`C:\Users\jeffr\Documents\edge-rush\HANDOFF.md`) and say "read this and continue."
 
+## Sandbox limits — read this before touching git
+
+**Never run `git add`/`git commit`/`git push`, `gh`, or `wrangler` from this
+sandbox.** There are no credentials for any of them here (confirmed
+repeatedly across sessions). Editing files (Read/Edit/Write) and querying
+D1 directly via the Cloudflare MCP tools is fine and expected -- it's only
+git/gh/wrangler invocations that don't work.
+
+This isn't just "it'll fail cleanly" -- a `git commit` attempted from this
+sandbox has repeatedly left stale `.git/index.lock` / `.git/HEAD.lock`
+files behind (cross-filesystem permission issue between the sandbox mount
+and Jeff's actual Windows filesystem: git can create the lock but can't
+unlink it after). Jeff has had to manually delete these more than once
+already (`del .git\index.lock` / `del .git\HEAD.lock` from his own
+terminal, not from the sandbox -- the sandbox can't remove them either).
+
+**What to do instead:** make the file edits, then just tell Jeff what
+changed and that he needs to `git add`/`commit`/`push` himself -- plus a
+`wrangler deploy` from `worker/` and/or a site push if the Worker or
+`site/` files changed (same two-step deploy pattern noted throughout this
+file). Don't attempt any of that from here, even if it looks like it might
+work this time.
+
 ## What this project is
 
 A personal NFL handicapping / power-rating model, built in 4 phases:

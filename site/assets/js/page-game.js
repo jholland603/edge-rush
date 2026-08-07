@@ -48,6 +48,26 @@
     const spreadLabel = useAverage && oddsAverage.spread !== null ? "Average spread" : "Closing spread";
     const totalLabel = useAverage && oddsAverage.total !== null ? "Average total" : "Total line";
 
+    // Jeff bets at DraftKings specifically, so once we're already showing
+    // the live median (useAverage), also show DK's own line and how far
+    // it sits from that median -- a book can legitimately differ from the
+    // field (liability management, slower to move, etc.), and that gap is
+    // exactly what's worth seeing before betting there instead of
+    // shopping the number elsewhere. Spread's delta is computed in
+    // game.spread_line's convention (both values already converted), so a
+    // plain subtraction is valid -- no sign-flip needed here.
+    function dkNote(market, formatValue) {
+      if (!useAverage || !oddsAverage.draftkings) return "";
+      const dkValue = oddsAverage.draftkings[market];
+      const medianValue = oddsAverage[market];
+      if (dkValue === null || dkValue === undefined || medianValue === null || medianValue === undefined) return "";
+      const delta = dkValue - medianValue;
+      const deltaLabel = Math.abs(delta) < 0.01 ? "matches median" : `${delta > 0 ? "+" : ""}${Util.num(delta, 2)} vs. median`;
+      return `<div class="text-faint" style="font-size:0.8rem;margin-top:4px;">DK: ${formatValue(dkValue)} (${Util.escapeHtml(deltaLabel)})</div>`;
+    }
+    const spreadDkNote = dkNote("spread", (v) => Util.favoredTeamLine(v, g.home_team, g.away_team));
+    const totalDkNote = dkNote("total", (v) => Util.num(v, 1));
+
     titleEl.textContent = `${teamNames[g.away_team] || g.away_team} @ ${teamNames[g.home_team] || g.home_team}`;
     subtitleEl.textContent = `${g.season} · ${Util.weekLabel(g.week, g.game_type)} · ${Util.formatDate(g.gameday)}`;
 
@@ -69,10 +89,12 @@
         <div class="stat-card card">
           <div class="value">${Util.favoredTeamLine(spreadValue, g.home_team, g.away_team)}</div>
           <div class="label">${spreadLabel}${ats ? ` &mdash; ${Util.escapeHtml(ats)}` : ""}</div>
+          ${spreadDkNote}
         </div>
         <div class="stat-card card">
           <div class="value">${Util.num(totalValue, 1)}</div>
           <div class="label">${totalLabel}${ou ? ` &mdash; ${Util.escapeHtml(ou)}` : ""}</div>
+          ${totalDkNote}
         </div>
         <div class="stat-card card">
           <div class="value" style="font-size:1.1rem;">${weather.length ? weather.join(", ") : "-"}</div>

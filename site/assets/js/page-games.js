@@ -194,6 +194,24 @@
     return `<span class="odds-arrow odds-arrow--${direction}" title="${Util.escapeHtml(label)}"></span>`;
   }
 
+  // Small "DK +0.5" marker next to the Line/Total value when DraftKings'
+  // own line differs from the median -- Jeff bets at DK specifically, so
+  // "is my book off the field, and by how much" is worth surfacing right
+  // in the table, not just buried in game.html's detail view. Only makes
+  // sense alongside the average (useAverage cases), and only rendered
+  // when there's an actual gap to report.
+  function dkDeltaNote(avg, market) {
+    if (!avg || !avg.draftkings) return "";
+    const dkValue = avg.draftkings[market];
+    const medianValue = avg[market];
+    if (dkValue === null || dkValue === undefined || medianValue === null || medianValue === undefined) return "";
+    const delta = dkValue - medianValue;
+    if (Math.abs(delta) < 0.01) return "";
+    const deltaStr = `${delta > 0 ? "+" : ""}${Util.num(delta, 2)}`;
+    const title = `DraftKings: ${dkValue} (median ${medianValue})`;
+    return ` <span class="text-faint dk-delta" title="${Util.escapeHtml(title)}">DK ${deltaStr}</span>`;
+  }
+
   // Same reasoning as game.html's summary cards (see page-game.js): for a
   // played game, g.spread_line/total_line is the real closing line, keep
   // it. For an upcoming game, prefer the live across-bookmaker average
@@ -206,7 +224,8 @@
     const useAverage = !played && avg && avg.spread !== null;
     const value = useAverage ? avg.spread : g.spread_line;
     const title = useAverage ? ` title="Average across ${avg.book_count} book(s)"` : "";
-    return `<span${title}>${Util.favoredTeamLine(value, g.home_team, g.away_team)}</span>${oddsArrow(lean && lean.odds_movement, "spread")}`;
+    const dkNote = useAverage ? dkDeltaNote(avg, "spread") : "";
+    return `<span${title}>${Util.favoredTeamLine(value, g.home_team, g.away_team)}</span>${oddsArrow(lean && lean.odds_movement, "spread")}${dkNote}`;
   }
 
   function totalCell(g, lean) {
@@ -215,7 +234,8 @@
     const useAverage = !played && avg && avg.total !== null;
     const value = useAverage ? avg.total : g.total_line;
     const title = useAverage ? ` title="Average across ${avg.book_count} book(s)"` : "";
-    return `<span${title}>${Util.num(value, 1)}</span>${oddsArrow(lean && lean.odds_movement, "total")}`;
+    const dkNote = useAverage ? dkDeltaNote(avg, "total") : "";
+    return `<span${title}>${Util.num(value, 1)}</span>${oddsArrow(lean && lean.odds_movement, "total")}${dkNote}`;
   }
 
   // --- Pick-log cells (folded in from the old picks.html) --------------

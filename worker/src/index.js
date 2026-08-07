@@ -1437,6 +1437,18 @@ const ODDS_MOVEMENT_THRESHOLD = 1.0;
 // Games with only one snapshot timestamp so far are silently omitted (the
 // WHERE clause requires two distinct timestamps) -- no movement to report
 // yet, not an error.
+// Uses the MEDIAN across bookmakers, not the mean -- Jeff's call, after we
+// caught a case where a single book (bovada) had a stale/wrong line 7
+// points off every other book's number, and the plain mean smeared that
+// into what looked like real (but fake) line movement. SQLite/D1 has no
+// built-in MEDIAN aggregate, so it's done by hand: rank values within each
+// (game_id, bucket) partition, then average the middle one or two ranks
+// (the standard odd/even-count median trick -- for an odd count both
+// picked ranks are the same row, so it's a no-op; for an even count it
+// splits the difference between the two middle values). Spread and total
+// are ranked independently since a book can quote one market and not the
+// other (e.g. betmgm with no spread posted) -- excluded from that market's
+// ranking via the IS NOT NULL filter, not treated as a value.
 async function getOddsMovement(DB, gameIds) {
   if (!gameIds.length) return {};
   const placeholders = gameIds.map(() => "?").join(",");
@@ -1449,22 +1461,49 @@ async function getOddsMovement(DB, gameIds) {
       GROUP BY game_id
       HAVING MIN(snapshot_time) != MAX(snapshot_time)
     ),
-    open_avg AS (
-      SELECT o.game_id, AVG(o.spread_line) AS spread_line, AVG(o.total_line) AS total_line
-      FROM odds_snapshot o JOIN bounds b ON o.game_id = b.game_id AND o.snapshot_time = b.first_time
-      GROUP BY o.game_id
+    tagged AS (
+      SELECT o.game_id,
+             CASE WHEN o.snapshot_time = b.first_time THEN 'open'
+                  WHEN o.snapshot_time = b.last_time THEN 'latest' END AS bucket,
+             o.spread_line, o.total_line
+      FROM odds_snapshot o
+      JOIN bounds b ON b.game_id = o.game_id
+      WHERE o.snapshot_time IN (b.first_time, b.last_time)
     ),
-    latest_avg AS (
-      SELECT o.game_id, AVG(o.spread_line) AS spread_line, AVG(o.total_line) AS total_line
-      FROM odds_snapshot o JOIN bounds b ON o.game_id = b.game_id AND o.snapshot_time = b.last_time
-      GROUP BY o.game_id
+    spread_ranked AS (
+      SELECT game_id, bucket, spread_line,
+             ROW_NUMBER() OVER (PARTITION BY game_id, bucket ORDER BY spread_line) AS rn,
+             COUNT(*) OVER (PARTITION BY game_id, bucket) AS cnt
+      FROM tagged
+      WHERE spread_line IS NOT NULL AND bucket IS NOT NULL
+    ),
+    spread_median AS (
+      SELECT game_id, bucket, AVG(spread_line) AS median_spread
+      FROM spread_ranked
+      WHERE rn IN ((cnt + 1) / 2, (cnt + 2) / 2)
+      GROUP BY game_id, bucket
+    ),
+    total_ranked AS (
+      SELECT game_id, bucket, total_line,
+             ROW_NUMBER() OVER (PARTITION BY game_id, bucket ORDER BY total_line) AS rn,
+             COUNT(*) OVER (PARTITION BY game_id, bucket) AS cnt
+      FROM tagged
+      WHERE total_line IS NOT NULL AND bucket IS NOT NULL
+    ),
+    total_median AS (
+      SELECT game_id, bucket, AVG(total_line) AS median_total
+      FROM total_ranked
+      WHERE rn IN ((cnt + 1) / 2, (cnt + 2) / 2)
+      GROUP BY game_id, bucket
     )
     SELECT b.game_id,
-           o.spread_line AS open_spread, l.spread_line AS latest_spread,
-           o.total_line AS open_total, l.total_line AS latest_total
+           so.median_spread AS open_spread, sl.median_spread AS latest_spread,
+           tmo.median_total AS open_total, tml.median_total AS latest_total
     FROM bounds b
-    JOIN open_avg o ON o.game_id = b.game_id
-    JOIN latest_avg l ON l.game_id = b.game_id
+    LEFT JOIN spread_median so ON so.game_id = b.game_id AND so.bucket = 'open'
+    LEFT JOIN spread_median sl ON sl.game_id = b.game_id AND sl.bucket = 'latest'
+    LEFT JOIN total_median tmo ON tmo.game_id = b.game_id AND tmo.bucket = 'open'
+    LEFT JOIN total_median tml ON tml.game_id = b.game_id AND tml.bucket = 'latest'
     `
   )
     .bind(...gameIds)
@@ -1490,15 +1529,27 @@ async function getOddsMovement(DB, gameIds) {
   return movement;
 }
 
-// Current across-bookmaker average spread/total for each game, as of its
+// Current across-bookmaker MEDIAN spread/total for each game, as of its
 // LATEST snapshot -- unlike getOddsMovement() above, this needs only one
 // snapshot to return something (no HAVING two-distinct-timestamps filter),
-// since "what's the average right now" doesn't require movement to exist
-// yet. Converts spread to game.spread_line's home-favored-positive
-// convention (negating the raw odds_snapshot value -- see the sign-
-// convention note above) so callers can hand it straight to
+// since "what's the market right now" doesn't require movement to exist
+// yet. Median, not mean, for the same reason as getOddsMovement() above --
+// see the comment there. Converts spread to game.spread_line's
+// home-favored-positive convention (negating the raw odds_snapshot value --
+// see the sign-convention note above) so callers can hand it straight to
 // Util.favoredTeamLine like any other spread number. Total needs no
-// conversion (same convention everywhere).
+// conversion (same convention everywhere). The function/field names still
+// say "average" -- that's the label shown on the site ("Average spread"),
+// median is just how it's computed underneath.
+//
+// Also pulls DraftKings' own line at that same snapshot (Jeff bets at DK
+// specifically, so "how does my book compare to the field" is a genuinely
+// different, useful question from "what's the market doing" -- a book can
+// legitimately sit off the median without being wrong/stale, e.g. for
+// liability-management reasons, and that gap is exactly what's worth
+// seeing before placing a bet there instead of shopping it). Null if DK
+// hasn't posted that market yet at this snapshot -- not an error, some
+// books lag others on posting certain lines.
 async function getLatestOddsAverage(DB, gameIds) {
   if (!gameIds.length) return {};
   const placeholders = gameIds.map(() => "?").join(",");
@@ -1509,13 +1560,57 @@ async function getLatestOddsAverage(DB, gameIds) {
       FROM odds_snapshot
       WHERE game_id IN (${placeholders})
       GROUP BY game_id
+    ),
+    latest_rows AS (
+      SELECT o.game_id, o.bookmaker, o.spread_line, o.total_line
+      FROM odds_snapshot o
+      JOIN latest_time lt ON lt.game_id = o.game_id AND lt.snapshot_time = o.snapshot_time
+    ),
+    spread_ranked AS (
+      SELECT game_id, spread_line,
+             ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY spread_line) AS rn,
+             COUNT(*) OVER (PARTITION BY game_id) AS cnt
+      FROM latest_rows
+      WHERE spread_line IS NOT NULL
+    ),
+    spread_median AS (
+      SELECT game_id, AVG(spread_line) AS median_spread
+      FROM spread_ranked
+      WHERE rn IN ((cnt + 1) / 2, (cnt + 2) / 2)
+      GROUP BY game_id
+    ),
+    total_ranked AS (
+      SELECT game_id, total_line,
+             ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY total_line) AS rn,
+             COUNT(*) OVER (PARTITION BY game_id) AS cnt
+      FROM latest_rows
+      WHERE total_line IS NOT NULL
+    ),
+    total_median AS (
+      SELECT game_id, AVG(total_line) AS median_total
+      FROM total_ranked
+      WHERE rn IN ((cnt + 1) / 2, (cnt + 2) / 2)
+      GROUP BY game_id
+    ),
+    book_counts AS (
+      SELECT game_id, COUNT(DISTINCT bookmaker) AS book_count
+      FROM latest_rows
+      GROUP BY game_id
+    ),
+    draftkings AS (
+      SELECT game_id, spread_line AS dk_spread_raw, total_line AS dk_total
+      FROM latest_rows
+      WHERE bookmaker = 'draftkings'
     )
-    SELECT o.game_id, lt.snapshot_time,
-           AVG(o.spread_line) AS avg_spread_raw, AVG(o.total_line) AS avg_total,
-           COUNT(DISTINCT o.bookmaker) AS book_count
-    FROM odds_snapshot o
-    JOIN latest_time lt ON lt.game_id = o.game_id AND lt.snapshot_time = o.snapshot_time
-    GROUP BY o.game_id
+    SELECT lt.game_id, lt.snapshot_time,
+           sm.median_spread AS median_spread_raw, tm.median_total,
+           bc.book_count,
+           dk.dk_spread_raw, dk.dk_total
+    FROM latest_time lt
+    LEFT JOIN spread_median sm ON sm.game_id = lt.game_id
+    LEFT JOIN total_median tm ON tm.game_id = lt.game_id
+    LEFT JOIN book_counts bc ON bc.game_id = lt.game_id
+    LEFT JOIN draftkings dk ON dk.game_id = lt.game_id
     `
   )
     .bind(...gameIds)
@@ -1524,10 +1619,14 @@ async function getLatestOddsAverage(DB, gameIds) {
   const average = {};
   for (const row of results) {
     average[row.game_id] = {
-      spread: row.avg_spread_raw === null ? null : -row.avg_spread_raw,
-      total: row.avg_total,
+      spread: row.median_spread_raw === null ? null : -row.median_spread_raw,
+      total: row.median_total,
       book_count: row.book_count,
       snapshot_time: row.snapshot_time,
+      draftkings: {
+        spread: row.dk_spread_raw === null || row.dk_spread_raw === undefined ? null : -row.dk_spread_raw,
+        total: row.dk_total === undefined ? null : row.dk_total,
+      },
     };
   }
   return average;
