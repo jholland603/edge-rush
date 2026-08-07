@@ -1,0 +1,123 @@
+name: Weekly Data Refresh
+
+# Replaces the Cowork scheduled task "edge-rush-weekly-refresh". Runs the
+# same three scripts, in the same order, against the same D1 database --
+# just from a real CI environment with `wrangler` auth instead of routing
+# SQL through the D1 MCP connector. See HANDOFF.md for the history of why
+# this moved off Cowork.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN   - scoped to D1 edit access for the edge-rush DB
+#   CLOUDFLARE_ACCOUNT_ID  - the Cloudflare account that owns the DB
+
+on:
+  schedule:
+    # 9:09am US Eastern on Tuesdays. GitHub Actions cron is always UTC and
+    # does not shift for daylight saving, so this drifts an hour during
+    # EST (Nov-Mar) -- close enough for a weekly data refresh; adjust if
+    # exact timing ever matters.
+    - cron: "9 13 * * 2"
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install pandas numpy scikit-learn
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
+      - name: Determine current NFL season
+        id: season
+        run: |
+          SEASON=$(python3 -c "
+          from datetime import date
+          today = date.today()
+          print(today.year - 1 if today.month in (1, 2) else today.year)
+          ")
+          echo "season=$SEASON" >> "$GITHUB_OUTPUT"
+          echo "Current season: $SEASON"
+
+      - name: Download fresh nflverse CSVs
+        run: |
+          SEASON=${{ steps.season.outputs.season }}
+          mkdir -p raw/team raw/player raw/injuries
+
+          echo "games.csv (all seasons, always refreshed)..."
+          curl -fsSL -o raw/games.csv \
+            https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv
+
+          # weekly_update.py needs EVERY season's team stats file present
+          # locally to compute rating history -- raw/ isn't committed to
+          # the repo (see .gitignore), so a fresh runner re-pulls all of
+          # them each run. Small (~5.5MB total across 27 seasons) and fast;
+          # not worth caching.
+          echo "team stats, all seasons 1999-$SEASON..."
+          for s in $(seq 1999 "$SEASON"); do
+            curl -fsSL -o "raw/team/stats_team_week_${s}.csv" \
+              "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_${s}.csv" \
+              || echo "  $s: not published yet, skipping"
+          done
+
+          echo "current-season player stats + injuries..."
+          curl -fsSL -o "raw/player/stats_player_week_${SEASON}.csv" \
+            "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${SEASON}.csv" \
+            || echo "  player stats $SEASON: not published yet, skipping"
+          curl -fsSL -o "raw/injuries/injuries_${SEASON}.csv" \
+            "https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_${SEASON}.csv" \
+            || echo "  injuries $SEASON: not published yet, skipping"
+
+      - name: Load new/updated raw data into D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          SEASON=${{ steps.season.outputs.season }}
+          python3 scripts/build_incremental_sql.py --season "$SEASON" --sql-out /tmp/incremental.sql
+          if [ -s /tmp/incremental.sql ]; then
+            wrangler d1 execute edge-rush --remote --file=/tmp/incremental.sql
+          else
+            echo "No incremental changes this run."
+          fi
+
+      - name: Regenerate model predictions
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          SEASON=${{ steps.season.outputs.season }}
+          python3 scripts/weekly_update.py --season "$SEASON" --sql-out /tmp/model_update.sql
+          if [ -s /tmp/model_update.sql ]; then
+            wrangler d1 execute edge-rush --remote --file=/tmp/model_update.sql
+          else
+            echo "No model updates this run (no upcoming games with posted lines)."
+          fi
+
+      - name: Reconcile pending picks
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          wrangler d1 execute edge-rush --remote --json \
+            --command "SELECT game_id, market_spread, model_spread FROM picks_log WHERE actual_result IS NULL;" \
+            > /tmp/pending_raw.json
+          python3 -c "
+          import json
+          rows = json.load(open('/tmp/pending_raw.json'))[0]['results']
+          json.dump(rows, open('/tmp/pending.json', 'w'))
+          print(f'{len(rows)} pending pick(s) to check')
+          "
+          python3 scripts/reconcile_picks.py --pending-json /tmp/pending.json --sql-out /tmp/reconcile.sql
+          if [ -s /tmp/reconcile.sql ]; then
+            wrangler d1 execute edge-rush --remote --file=/tmp/reconcile.sql
+          else
+            echo "Nothing to reconcile this run."
+          fi

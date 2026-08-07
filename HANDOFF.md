@@ -2091,3 +2091,97 @@ games that haven't been played."
   this sandbox.
 - Needs a Worker redeploy (new `/games/:season/:week/leans` route) + the
   usual `site/` push (games.html, data.js, page-games.js) together.
+
+## Odds-movement tracking (new `odds_snapshot` table) + moving weekly automation off Cowork
+
+Jeff's ask: the project tracks spread CLV (flag-time vs. closing `spread_line`
+in `picks_log`), but nothing tracks moneyline, and even the spread CLV is
+only two snapshots -- flag time and closing, never anything in between.
+`games.csv` can't fix this; nflverse only ever gives one snapshot per pull.
+Scope, confirmed with Jeff: forward-looking only (no historical backfill),
+capture spread/total/moneyline all together (not just moneyline), store as
+its own thing rather than folding into `picks_log` (picks_log is the
+model's frozen, graded spread picks -- odds snapshots are a raw time series
+across every upcoming game, flagged or not, with no model prediction
+attached).
+
+- **New D1 table `odds_snapshot`** (already created live, not just
+  scripted): `game_id`, `bookmaker`, `snapshot_time`, `home_moneyline`,
+  `away_moneyline`, `spread_line`, `home_spread_odds`, `away_spread_odds`,
+  `total_line`, `over_odds`, `under_odds`. `UNIQUE(game_id, bookmaker,
+  snapshot_time)`, append-only (`INSERT OR IGNORE`), never updated or
+  deleted. No CLV/grading logic on this table yet -- that's a later step,
+  once there's an actual sample to look at.
+- **New script `scripts/fetch_odds_snapshot.py`** -- calls The Odds API
+  (https://the-odds-api.com, free tier: 500 credits/month, this uses ~3/run)
+  for live NFL h2h/spreads/totals odds, maps their full team names to
+  nflverse abbreviations (`TEAM_NAME_TO_ABBR`), and matches each game to a
+  `game_id` by looking up `(home_abbr, away_abbr)` against unplayed rows in
+  `raw/games.csv` (nearest `gameday` to `commence_time` if more than one
+  candidate). Same `--sql-out` pattern as the other scripts. Verified
+  end-to-end with a mocked API response against the real `raw/games.csv`
+  (game_id matched correctly) and a real insert/select/delete round-trip
+  against the live `odds_snapshot` table.
+
+**Bigger change: the Cowork scheduled task (`edge-rush-weekly-refresh`) is
+being replaced by GitHub Actions**, not extended to also run the new odds
+job. Reasoning, worked through with Jeff: `weekly_update.py` and
+`reconcile_picks.py` already carry `--sql-out`/`--pending-json` flags that
+exist *only* because the Cowork sandbox has no local `wrangler` login and
+has to route SQL through the D1 MCP connector instead -- a workaround for
+the automation environment, not something the scripts would otherwise need.
+Adding a second, more-frequent (3x/week) LLM-driven scheduled job on top of
+that same constraint compounds it rather than fixing it. The repo's already
+on GitHub (`jholland603/edge-rush`), so Actions reuses the exact scripts
+unmodified, gets real secrets (`CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`/
+`ODDS_API_KEY` as encrypted repo secrets instead of embedded in a task
+prompt), and gets real run logs/failure notifications for free.
+
+- **`.github/workflows/weekly-refresh.yml`** -- Tuesday cron (`9 13 * * 2`,
+  UTC, matches the old task's 9:09am ET slot but doesn't shift for DST) +
+  manual `workflow_dispatch`. Same 3 steps as the old Cowork task's SKILL.md
+  (`build_incremental_sql.py` -> `weekly_update.py` -> `reconcile_picks.py`),
+  applying each script's generated SQL via `wrangler d1 execute --remote`
+  directly instead of the D1 MCP tool. **One real gap this surfaced**:
+  `weekly_update.py`'s `load_team_games` globs *every* season's
+  `raw/team/stats_team_week_*.csv` to compute rating history, but `raw/`
+  isn't committed to the repo (reproducible, gitignored) -- a fresh GitHub
+  Actions runner starts with none of it, unlike the Cowork task which reuses
+  Jeff's local `raw/` folder that already has the full 1999-2025 backfill
+  sitting in it. Fixed by re-downloading all 27 seasons of team-stats CSVs
+  every run (~5.5MB total, seconds) rather than caching -- small enough
+  that a cache-invalidation scheme would be more complexity than it's
+  worth. Current-season player-stats/injuries files are the only other
+  inputs `build_incremental_sql.py` needs, and those were already
+  single-season pulls.
+- **`.github/workflows/odds-snapshot.yml`** -- refined with Jeff after
+  working through credit budget: morning refresh every day, evening refresh
+  added on non-game days (Tue/Wed/Fri/Sat), and a pre-kickoff refresh on
+  game days (Thu/Sun/Mon) -- one call per distinct kickoff window, not per
+  game, since a single call already returns every game currently listed
+  (Sunday's 3 windows: 1:00pm/~4:15pm/8:20pm ET). 16 calls/week total (~205-
+  210 credits/month), confirmed against the free tier's 500/month cap
+  before building. 5 cron entries, all computed assuming ET=UTC-4 (documented
+  in the workflow: drifts an hour early once EST kicks in mid-season, the
+  safe direction). Also added a free pre-check (`gamecheck` step, just reads
+  the already-downloaded `raw/games.csv` locally) that skips the paid API
+  call entirely when nothing's scheduled in the next few days -- this cron
+  runs year-round, so without it the off-season would burn credits for
+  nothing. Verified the check correctly reports 0 upcoming games as of this
+  session (August, off-season). Pulls fresh `games.csv` (for game_id
+  matching), runs `fetch_odds_snapshot.py`, applies via `wrangler`.
+- **Not yet done (needs Jeff, can't be done from this sandbox — no
+  `wrangler`/`gh` auth here either, confirmed):**
+  1. Sign up for a The Odds API key.
+  2. Create/reuse a Cloudflare API token scoped for D1 edit access on the
+     `edge-rush` database.
+  3. Add `ODDS_API_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` as
+     GitHub repo secrets (Settings -> Secrets and variables -> Actions).
+  4. Commit + push `.github/workflows/*.yml` and `scripts/fetch_odds_snapshot.py`
+     (all written to the working tree, not yet committed).
+  5. Trigger both workflows manually once (`workflow_dispatch`) to confirm
+     they run clean end-to-end against real D1/API credentials.
+  6. Once confirmed, disable the old Cowork `edge-rush-weekly-refresh` task
+     (`mcp__scheduled-tasks__delete_scheduled_task` or via the Cowork
+     sidebar) so the same work doesn't run twice. The daily
+     `nfl-weather-forecast-refresh` Cowork task is unrelated and untouched.

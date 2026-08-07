@@ -1,0 +1,101 @@
+name: Odds Snapshot
+
+# Snapshots live NFL moneyline/spread/total odds from The Odds API into D1's
+# odds_snapshot table, several times a week, so line movement across the
+# week is actually visible (not just an open-vs-close pair). Forward-looking
+# only -- no historical backfill. See HANDOFF.md for why this is a separate
+# table/workflow from weekly-refresh.yml rather than folded into picks_log.
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   ODDS_API_KEY           - from https://the-odds-api.com (free tier is
+#                             plenty: this uses ~3 credits per run)
+#   CLOUDFLARE_API_TOKEN   - same one weekly-refresh.yml uses
+#   CLOUDFLARE_ACCOUNT_ID  - same one weekly-refresh.yml uses
+
+on:
+  schedule:
+    # All times computed assuming ET = UTC-4 (EDT). NFL season straddles
+    # the Nov DST change, so once EST (UTC-5) kicks in these all fire an
+    # hour earlier than the local-time label below -- e.g. "1hr before a
+    # 1pm kickoff" becomes 2hrs before once EST starts. That's the safe
+    # direction (early, never late), so left as-is rather than juggling
+    # two sets of cron entries for one DST swap mid-season.
+    #
+    # Morning refresh, every day, 8am ET -> 12:00 UTC (16 calls/week total,
+    # confirmed with Jeff): 7/week from this entry alone.
+    - cron: "0 12 * * *"
+    # Evening refresh, non-game days only (Tue/Wed/Fri/Sat), 8pm ET -> next
+    # day 00:00 UTC. Cron day-of-week is the UTC day, so this list is the
+    # day AFTER each local evening: Wed(3)=Tue evening, Thu(4)=Wed evening,
+    # Sat(6)=Fri evening, Sun(0)=Sat evening. 4/week.
+    - cron: "0 0 * * 0,3,4,6"
+    # Pre-kickoff, Thursday Night Football (~8:15pm ET), refresh ~7pm ET
+    # -> 23:00 UTC same day. 1/week.
+    - cron: "0 23 * * 4"
+    # Pre-kickoff, Sunday's three kickoff windows (1:00pm, ~4:15pm, 8:20pm
+    # ET) -> 16:00 / 19:00 / 23:00 UTC, one call per window covers every
+    # game in that window at once. 3/week.
+    - cron: "0 16,19,23 * * 0"
+    # Pre-kickoff, Monday Night Football (~8:15pm ET) -> 23:00 UTC. 1/week.
+    - cron: "0 23 * * 1"
+  workflow_dispatch: {}
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install pandas
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
+      - name: Refresh games.csv (need current upcoming-game_ids to match odds against)
+        run: |
+          mkdir -p raw
+          curl -fsSL -o raw/games.csv \
+            https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv
+
+      - name: Check whether anything's actually coming up
+        id: gamecheck
+        # This schedule runs year-round (16x/week during the season adds
+        # up fast, but cron doesn't know it's July). Skip the paid API
+        # call entirely -- this check is free, just reads the CSV already
+        # on disk -- if nothing's scheduled in the next 3 days. Also
+        # softens bye-heavy weeks where a "game day" call would otherwise
+        # burn a credit on a slate that doesn't include every team.
+        run: |
+          python3 -c "
+          import pandas as pd
+          from datetime import date, timedelta
+          df = pd.read_csv('raw/games.csv', low_memory=False)
+          upcoming = df[df['result'].isna()].copy()
+          upcoming['gameday'] = pd.to_datetime(upcoming['gameday'])
+          window = upcoming[
+              (upcoming['gameday'] >= pd.Timestamp(date.today() - timedelta(days=1)))
+              & (upcoming['gameday'] <= pd.Timestamp(date.today() + timedelta(days=3)))
+          ]
+          print(f'{len(window)} upcoming game(s) in the next few days')
+          print('has_games=' + ('true' if len(window) > 0 else 'false'))
+          " | tee /tmp/gamecheck.log
+          tail -1 /tmp/gamecheck.log >> "$GITHUB_OUTPUT"
+
+      - name: Fetch odds snapshot and apply to D1
+        if: steps.gamecheck.outputs.has_games == 'true'
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          python3 scripts/fetch_odds_snapshot.py --sql-out /tmp/odds.sql
+          if [ -s /tmp/odds.sql ]; then
+            wrangler d1 execute edge-rush --remote --file=/tmp/odds.sql
+          else
+            echo "No odds rows to insert this run."
+          fi
