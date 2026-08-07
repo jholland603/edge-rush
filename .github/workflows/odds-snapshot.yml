@@ -1,10 +1,20 @@
-name: Odds Snapshot
+name: Market Refresh (Odds + Model)
 
-# Snapshots live NFL moneyline/spread/total odds from The Odds API into D1's
-# odds_snapshot table, several times a week, so line movement across the
-# week is actually visible (not just an open-vs-close pair). Forward-looking
-# only -- no historical backfill. See HANDOFF.md for why this is a separate
-# table/workflow from weekly-refresh.yml rather than folded into picks_log.
+# Two jobs on one schedule, added together deliberately (see HANDOFF.md):
+#
+# 1. Snapshots live NFL moneyline/spread/total odds from The Odds API into
+#    D1's odds_snapshot table, so line movement across the week is actually
+#    visible (not just an open-vs-close pair). Forward-looking only -- no
+#    historical backfill.
+# 2. Scores upcoming games with the (rolling-10-game) prediction model and
+#    upserts into D1's `model`/`picks_log` tables. This moved here from
+#    weekly-refresh.yml in 2026-08 once the model stopped needing a
+#    season-spanning history pull -- it now makes sense to re-score as
+#    often as the odds themselves refresh, using each run's fresh market
+#    line, rather than waiting for the once-a-week job.
+#
+# Filename stayed odds-snapshot.yml (just the display name above changed) to
+# avoid re-creating the workflow and losing run history over a rename.
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   ODDS_API_KEY           - from https://the-odds-api.com (free tier is
@@ -51,10 +61,21 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python dependencies
-        run: pip install pandas
+        run: pip install pandas numpy
 
       - name: Install wrangler
         run: npm install -g wrangler
+
+      - name: Determine current NFL season
+        id: season
+        run: |
+          SEASON=$(python3 -c "
+          from datetime import date
+          today = date.today()
+          print(today.year - 1 if today.month in (1, 2) else today.year)
+          ")
+          echo "season=$SEASON" >> "$GITHUB_OUTPUT"
+          echo "Current season: $SEASON"
 
       - name: Refresh games.csv (need current upcoming-game_ids to match odds against)
         run: |
@@ -98,4 +119,30 @@ jobs:
             wrangler d1 execute edge-rush --remote --file=/tmp/odds.sql
           else
             echo "No odds rows to insert this run."
+          fi
+
+      - name: Download recent team stats + injuries (rolling-10 only needs last ~1-2 seasons)
+        run: |
+          SEASON=${{ steps.season.outputs.season }}
+          mkdir -p raw/team raw/injuries
+          for s in $((SEASON - 1)) "$SEASON"; do
+            curl -fsSL -o "raw/team/stats_team_week_${s}.csv" \
+              "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_${s}.csv" \
+              || echo "  team stats $s: not published/available, skipping"
+          done
+          curl -fsSL -o "raw/injuries/injuries_${SEASON}.csv" \
+            "https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_${SEASON}.csv" \
+            || echo "  injuries $SEASON: not published yet, skipping"
+
+      - name: Score upcoming games and apply to D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          SEASON=${{ steps.season.outputs.season }}
+          python3 scripts/weekly_update.py --season "$SEASON" --sql-out /tmp/model_update.sql
+          if [ -s /tmp/model_update.sql ]; then
+            wrangler d1 execute edge-rush --remote --file=/tmp/model_update.sql
+          else
+            echo "No model updates this run (no upcoming games with posted lines)."
           fi

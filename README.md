@@ -78,7 +78,7 @@ python scripts/build_json.py --stage all
 Run the weekly prediction + logging pipeline (paper trading only):
 
 ```
-python scripts/weekly_update.py --raw-dir raw --data-dir data --backtest-dir backtest --predictions-v2 backtest/predictions_v2.csv --season 2026
+python scripts/weekly_update.py --raw-dir raw --season 2026
 ```
 
 Reconcile the pick log against games that have since been played (safe to run any time — no-op for ungraded games):

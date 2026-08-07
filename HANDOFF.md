@@ -2185,3 +2185,123 @@ prompt), and gets real run logs/failure notifications for free.
      (`mcp__scheduled-tasks__delete_scheduled_task` or via the Cowork
      sidebar) so the same work doesn't run twice. The daily
      `nfl-weather-forecast-refresh` Cowork task is unrelated and untouched.
+
+**Update, same day:** Jeff completed steps 1-5 above himself (Odds API key,
+Cloudflare token scoped to D1 Edit, all three repo secrets added, files
+pushed) and triggered both workflows manually -- both came back green,
+`odds-snapshot.yml`'s "no games in the next few days" off-season guard fired
+correctly (it's August). Step 6 (retiring the old Cowork task) is still
+open. One real data point from this: while walking through it he noticed
+`weekly-refresh.yml` was pulling all 27 seasons of team-stats CSVs and
+pushed back -- "I want to discontinue that model... I don't need anything
+to look back 27 years" -- which turned into the model-rating change below.
+
+## Model rating switched from full-history EWMA to rolling-10 games
+
+Jeff's request, prompted by the CSV-pull question above: after clarifying
+scope (he wants the rating method changed, not the model discontinued),
+he asked for the same rolling-last-10-games approach already live on
+`game.html`'s Team Comparison card, "regardless of year, and including
+playoffs" -- "games played in 2020 have less than zero effect on what's
+happening now." He also asked, separately, for scoring to run on the same
+cadence as the odds snapshots (up to 16x/week), not just Tuesdays.
+
+**Told him plainly before touching anything:** this exact idea was already
+backtested that same session, in `backtest_v5_rolling10.py` (see above) --
+rolling-10 (tested REG-only, as a standalone rating and as an added feature
+on top of the EWMA model) showed essentially zero correlation with ATS
+outcome (Pearson r ≈ 0.03 at every window size 5/8/10/15) and made the
+full model's hit rate slightly *worse* when added (51.26% -> 51.04%). Jeff
+chose rolling-10 anyway, informed, for recency over history. This is a
+deliberate, disclosed tradeoff, not an oversight -- documented in
+`backtest/model_coefficients.json`'s `note` field, `data/model/README.md`,
+and here.
+
+One further, smaller deviation from what was actually backtested: the *live*
+rolling-10 definition includes playoff games (per Jeff's explicit spec,
+matching `game.html`'s existing feature), while `backtest_v5_rolling10.py`
+tested REG-only (documented in that script as a known simplification, see
+above). So the live model isn't exactly the thing that scored 51.04% either
+-- close, not identical, in the direction of *more* recent data, not less.
+
+**The bigger engineering problem this created, and how it got solved:**
+switching the *live* rating to rolling-10 doesn't remove the need for full
+historical data by itself -- fitting the regression coefficients still needs
+thousands of historical games with the new rolling-10 features rebuilt
+across all of history. Refitting on every scoring run (now up to 16x/week)
+would have made the "why 27 years of CSVs" problem worse, not better.
+Fixed by splitting fitting from scoring, permanently:
+
+- **New script `scripts/fit_model_coefficients.py`** -- run by hand,
+  occasionally (needs the full historical `raw/team/` archive, all
+  seasons). Loads team-game EPA with **REG + POST both included** (a new
+  `load_team_games_all_types`, since `backtest_v2.load_team_games` and the
+  old `weekly_update.load_team_games` both filtered to REG only), builds a
+  leak-free rolling-10 rating per team per historical week (`shift(1)
+  .rolling(10, min_periods=1).mean()`, same math as
+  `backtest_v5_rolling10.py`'s `build_rolling_ratings`, just fed the
+  REG+POST team-games table instead of REG-only), and reuses
+  `backtest_v2.build_matchups` UNCHANGED for the rest of the historical
+  feature table (QB-change flags, injury counts -- both already
+  leak-free and well-tested, no reason to rebuild them). Fits the margin
+  model (OLS, same as before) and the edge-calibration model (logistic
+  regression, model_edge -> P(home covers)) and writes both, plus the
+  calibration coefficients as plain numbers (not a pickled sklearn object),
+  to **`backtest/model_coefficients.json`**. Ran it for real this session:
+  6,067 historical REG-season games, coefficients look sane (pass_edge
+  5.00, rush_edge 1.31, qb_change_home -4.03/away +3.73 -- losing your own
+  QB hurts, opponent losing theirs helps, correct signs). Calibration slope
+  is tiny (0.0101) -- consistent with the known finding that this model's
+  edge doesn't reliably predict confidence, expected and unchanged by the
+  rating-method swap.
+- **`scripts/weekly_update.py` rewritten**: `load_team_games` no longer
+  filters to REG only (same REG+POST reasoning as the fit script).
+  `current_ratings_all` replaced entirely -- old EWMA+season-carryover
+  logic (and `EWMA_ALPHA`/`SEASON_CARRYOVER`, `current_rating`,
+  `build_ratings_by_week`) deleted; new version is a plain trailing
+  average of each team's last 10 games (`groupby("team").tail(10).mean()`
+  per stat column, skipping NaN). The script **no longer fits anything** --
+  `fit_final_margin_model`/`fit_final_edge_calibration`/
+  `load_historical_matchups` all deleted, replaced by `load_coefficients()`
+  reading the JSON file the fit script produces, and a plain `sigmoid()`
+  helper standing in for sklearn's `predict_proba` (removes the sklearn
+  dependency from the live-scoring path entirely -- only the occasional
+  fit script needs it now). `--backtest-dir`/`--predictions-v2` CLI args
+  dropped (dead/superseded); new `--coefficients` arg, defaults to
+  `backtest/model_coefficients.json`.
+- **Verified two ways:** (1) ran the updated script against real data --
+  51 upcoming 2026 games (weeks 1-4) scored, 33 flagged, values sane (e.g.
+  NE @ SEA: market -3.5/model 1.92-ish home-perspective numbers, edge
+  -1.58, not flagged; CHI @ CAR: edge 4.37, flagged, p_home_covers 0.50 --
+  a big edge barely moving the calibrated probability, consistent with the
+  known calibration weakness, not a new bug). (2) **Confirmed the actual
+  footprint reduction**: ran the same script pointed at a `raw/` containing
+  ONLY the 2025 team-stats file (no historical archive at all) and diffed
+  the generated SQL against the full-archive run -- byte-identical output
+  (modulo timestamp). The live path genuinely only needs 1-2 seasons now.
+- **GitHub Actions restructured to match:**
+  - `weekly-refresh.yml`: model-scoring step removed entirely, and the
+    27-seasons-of-team-stats loop collapsed to just the current season
+    (that loop was ONLY ever for the old EWMA model's full-history need --
+    `build_incremental_sql.py` itself only ever touched one season at a
+    time). `scikit-learn` dropped from its pip install too.
+  - `odds-snapshot.yml` (display name changed to **"Market Refresh (Odds +
+    Model)"**, filename left alone on purpose so the already-green run
+    history and the workflow's identity in GitHub don't get orphaned by a
+    rename): gained a "current NFL season" step, a step pulling the last
+    two seasons' team-stats CSVs + current-season injuries (small, cheap,
+    same reasoning as the footprint-reduction test above), and a final
+    "Score upcoming games and apply to D1" step running
+    `weekly_update.py`. This step is deliberately **not** gated behind the
+    `gamecheck` step the odds fetch uses -- that gate exists to avoid
+    burning paid Odds API credits during the off-season; model scoring is
+    free (no external API), and `weekly_update.py` already no-ops cleanly
+    when there's nothing to predict, so gating it the same way would just
+    be redundant complexity.
+- **Not yet done:** commit + push these changes (workflow edits, the two
+  rewritten/new scripts, `backtest/model_coefficients.json`), then trigger
+  `workflow_dispatch` on the renamed-display Market Refresh workflow once
+  more to confirm the new team-stats-pull + scoring steps work end to end
+  in the real CI environment (only verified locally in this session so
+  far). Also still open: retiring the old Cowork `edge-rush-weekly-refresh`
+  task (see above -- unrelated to this change, just still pending).

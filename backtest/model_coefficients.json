@@ -1,0 +1,31 @@
+{
+  "fitted_at": "2026-08-07T02:20:43Z",
+  "rating_method": "rolling_last_10_games_reg_and_post",
+  "n_historical_games": 6067,
+  "features": [
+    "pass_edge",
+    "rush_edge",
+    "rest_diff",
+    "wind",
+    "dome",
+    "qb_change_home",
+    "qb_change_away",
+    "injury_edge"
+  ],
+  "margin_model_coefficients": {
+    "intercept": 2.309663562332984,
+    "pass_edge": 5.0020916967436175,
+    "rush_edge": 1.3053910595045937,
+    "rest_diff": 0.15056537981196438,
+    "wind": -0.0008287911646833734,
+    "dome": -0.32131723418538893,
+    "qb_change_home": -4.0328487155041755,
+    "qb_change_away": 3.732884795320021,
+    "injury_edge": 0.3093468631715433
+  },
+  "edge_calibration": {
+    "coef": 0.01012781936804652,
+    "intercept": -0.039910288688093036
+  },
+  "note": "Rolling-10 (REG+POST) was tested standalone in backtest_v5_rolling10.py (REG-only proxy) and found to show no ATS signal and no improvement over the prior full-history EWMA model (51.26% -> 51.04% hit rate). Jeff chose rolling-10 anyway for recency over history, aware of that finding -- see HANDOFF.md. Treat this model the same as its predecessor: paper-trading only, not validated to beat the closing line."
+}

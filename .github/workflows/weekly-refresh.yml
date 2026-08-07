@@ -1,10 +1,13 @@
 name: Weekly Data Refresh
 
-# Replaces the Cowork scheduled task "edge-rush-weekly-refresh". Runs the
-# same three scripts, in the same order, against the same D1 database --
-# just from a real CI environment with `wrangler` auth instead of routing
-# SQL through the D1 MCP connector. See HANDOFF.md for the history of why
-# this moved off Cowork.
+# Replaces the Cowork scheduled task "edge-rush-weekly-refresh". Handles the
+# stuff that only actually changes about once a week: pulling fresh
+# team/player/injury CSVs into D1, and grading picks whose games have since
+# been played. Model scoring moved OUT of this workflow in 2026-08 (see
+# market-refresh.yml) once the model switched to a rolling-10-game rating --
+# it now needs to run on the same cadence as the odds snapshots, not just
+# Tuesdays, and specifically does NOT need the season-spanning CSV pull this
+# workflow used to do only for that step's sake. See HANDOFF.md.
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   CLOUDFLARE_API_TOKEN   - scoped to D1 edit access for the edge-rush DB
@@ -30,7 +33,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python dependencies
-        run: pip install pandas numpy scikit-learn
+        run: pip install pandas numpy
 
       - name: Install wrangler
         run: npm install -g wrangler
@@ -55,17 +58,16 @@ jobs:
           curl -fsSL -o raw/games.csv \
             https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv
 
-          # weekly_update.py needs EVERY season's team stats file present
-          # locally to compute rating history -- raw/ isn't committed to
-          # the repo (see .gitignore), so a fresh runner re-pulls all of
-          # them each run. Small (~5.5MB total across 27 seasons) and fast;
-          # not worth caching.
-          echo "team stats, all seasons 1999-$SEASON..."
-          for s in $(seq 1999 "$SEASON"); do
-            curl -fsSL -o "raw/team/stats_team_week_${s}.csv" \
-              "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_${s}.csv" \
-              || echo "  $s: not published yet, skipping"
-          done
+          # build_incremental_sql.py only ever loads ONE season into D1 at a
+          # time (historical seasons were bulk-loaded once already, see
+          # HANDOFF.md) -- current season's team stats is all this workflow
+          # needs. No more looping back to 1999: that was only ever for the
+          # old EWMA model's full-history rating, which market-refresh.yml's
+          # rolling-10 model doesn't need.
+          echo "current-season team stats..."
+          curl -fsSL -o "raw/team/stats_team_week_${SEASON}.csv" \
+            "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_${SEASON}.csv" \
+            || echo "  team stats $SEASON: not published yet, skipping"
 
           echo "current-season player stats + injuries..."
           curl -fsSL -o "raw/player/stats_player_week_${SEASON}.csv" \
@@ -86,19 +88,6 @@ jobs:
             wrangler d1 execute edge-rush --remote --file=/tmp/incremental.sql
           else
             echo "No incremental changes this run."
-          fi
-
-      - name: Regenerate model predictions
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          SEASON=${{ steps.season.outputs.season }}
-          python3 scripts/weekly_update.py --season "$SEASON" --sql-out /tmp/model_update.sql
-          if [ -s /tmp/model_update.sql ]; then
-            wrangler d1 execute edge-rush --remote --file=/tmp/model_update.sql
-          else
-            echo "No model updates this run (no upcoming games with posted lines)."
           fi
 
       - name: Reconcile pending picks

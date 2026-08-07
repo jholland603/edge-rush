@@ -1,46 +1,60 @@
 #!/usr/bin/env python3
 """
-Phase 2: weekly tool. Run this any time during the season after dropping
-updated raw CSVs into raw/ (games.csv, team/stats_team_week_{season}.csv,
-player/player_stats_{season}.csv, injuries/injuries_{season}.csv).
+Phase 2: weekly (and now more-than-weekly -- see below) tool. Run this any
+time after dropping updated raw CSVs into raw/ (games.csv,
+team/stats_team_week_{season}.csv, injuries/injuries_{season}.csv).
 
 What it does:
-  1. Computes each team's CURRENT power rating (off/def x pass/rush) as of
-     right now -- i.e. their rating entering their next game -- using the
-     same leak-free EWMA + season-carryover logic as the Phase 1 backtest.
+  1. Computes each team's CURRENT rating (off/def x pass/rush) as of right
+     now -- i.e. their rating entering their next game -- as a simple
+     trailing average of their last 10 completed games, ANY season, REG +
+     POST both count. This replaced the original full-history EWMA rating
+     in 2026-08 -- Jeff's call, made aware that backtest_v5_rolling10.py
+     found no ATS signal from a rolling window (any size tested) and no
+     improvement over the EWMA model it replaced. Recency over history was
+     the deliberate tradeoff. See HANDOFF.md for the full writeup, and
+     backtest/model_coefficients.json's "note" field for the short version.
   2. Finds upcoming games (no result yet, but a market spread_line posted).
-  3. Builds the same feature set as backtest_v2 (pass_edge, rush_edge,
+  3. Builds the same feature set backtest_v2/v5 use (pass_edge, rush_edge,
      rest_diff, wind, dome, qb_change_home/away, injury_edge) for each one.
      QB-change and injury features use the CURRENT week's injury report
      (if available) rather than games.csv's actual-starter field, since
      that field isn't known in advance for a game that hasn't happened.
-  4. Fits the margin model and the edge-only calibration model on ALL
-     completed historical seasons (not walk-forward -- there's no "future"
-     left to hide), and scores every upcoming game.
+  4. Scores every upcoming game using PRE-FITTED coefficients loaded from
+     backtest/model_coefficients.json -- this script does NOT fit anything
+     itself anymore. Fitting needs the full historical raw/team/ archive
+     (all seasons) to rebuild a rolling-10 feature table across thousands
+     of historical games; that's a real "need decades of files" operation,
+     and now that this script runs as often as the odds snapshots (up to
+     16x/week, see .github/workflows/), it specifically should NOT need
+     that archive on every run. Re-run scripts/fit_model_coefficients.py
+     by hand (with the full raw/ archive present) whenever there's a good
+     reason to refit -- a meaningful chunk of new data, or the feature set
+     changing (Jeff's planned expert-picks addition, etc.) -- not on any
+     automated schedule.
   5. Upserts every scored game into the D1 `model` table (one row per
      game_id -- re-running this script before kickoff, e.g. as injury
-     news changes, overwrites that game's prediction in place) and
-     inserts newly-flagged games (|edge| >= threshold) into the D1
-     `picks_log` table. picks_log inserts are append-only: once a
-     game_id is logged there, this script never touches it again (that's
-     reconcile_picks.py's job, and even that only fills in the outcome
-     columns).
+     news changes or a new odds snapshot lands, overwrites that game's
+     prior prediction in place) and inserts newly-flagged games (|edge| >=
+     threshold) into the D1 `picks_log` table. picks_log inserts are
+     append-only: once a game_id is logged there, this script never
+     touches it again (that's reconcile_picks.py's job, and even that only
+     fills in the outcome columns).
 
-IMPORTANT: per the Phase 1 calibration test, this model's confidence is
-NOT reliably calibrated (Brier score at or above a naive 50/50 baseline).
-Everything this script produces is for logging/paper-trading only -- see
---note in the output. Nothing here should be treated as a real pick until
-Phase 1 shows a model that actually clears breakeven with calibrated
-confidence.
+IMPORTANT: per the Phase 1 calibration test (run against the prior EWMA
+model; rolling-10 hasn't been independently calibration-tested), this
+model's confidence should not be assumed reliable. Everything this script
+produces is for logging/paper-trading only -- see --note in the output.
 
-D1 access: this script shells out to `wrangler d1 execute --remote`, the
-same CLI already used for the historical import (see d1/import.ps1). You
-must have already run `wrangler login` once; no separate credentials are
-needed.
+D1 access: this script shells out to `wrangler d1 execute --remote` by
+default. You must have already run `wrangler login` once locally; GitHub
+Actions runs use CLOUDFLARE_API_TOKEN/CLOUDFLARE_ACCOUNT_ID env vars instead
+(same wrangler CLI, non-interactive auth).
 """
 
 import argparse
 import json
+import math
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -49,14 +63,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-EWMA_ALPHA = 0.25
-SEASON_CARRYOVER = 0.5
+ROLLING_WINDOW = 10
 EDGE_THRESHOLD = 2.0
 QB_WINDOW = 8
 DISCLAIMER = (
-    "PAPER TRADING ONLY. Phase 1 calibration testing found this model's "
-    "confidence is not reliably calibrated (Brier score at/above a naive "
-    "50/50 baseline). These numbers are logged for tracking, not acted on."
+    "PAPER TRADING ONLY. Rolling-10 rating method (2026-08+): backtested "
+    "standalone with no ATS signal found at any window size, and no "
+    "improvement over the model's prior EWMA approach. Chosen for recency "
+    "over history anyway -- see HANDOFF.md. These numbers are logged for "
+    "tracking, not acted on."
 )
 
 
@@ -64,8 +79,12 @@ def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def sigmoid(x):
+    return 1.0 / (1.0 + math.exp(-x))
+
+
 # --------------------------------------------------------------------------
-# D1 helpers (shell out to wrangler, same auth as the historical import)
+# D1 helpers (shell out to wrangler)
 # --------------------------------------------------------------------------
 def sql_str(v):
     if v is None:
@@ -104,7 +123,12 @@ def run_d1_statements(statements, db_name):
 
 
 # --------------------------------------------------------------------------
-# team EPA/play, same as backtest_v2
+# team EPA/play -- REG + POST both count (rolling-10 uses playoff games as
+# recent-form signal, per Jeff's spec: "regardless of year, including
+# playoffs"). Only needs whatever season files happen to be in raw/team/ --
+# the live scoring path only ever needs the last ~10 games per team, so
+# current + previous season is plenty; it does NOT need the full historical
+# archive the way fit_model_coefficients.py does.
 # --------------------------------------------------------------------------
 def load_team_games(raw_dir: Path) -> pd.DataFrame:
     files = sorted((raw_dir / "team").glob("stats_team_week_*.csv"))
@@ -112,7 +136,7 @@ def load_team_games(raw_dir: Path) -> pd.DataFrame:
         raise SystemExit("No raw/team/stats_team_week_*.csv files found.")
     dfs = [pd.read_csv(f, low_memory=False) for f in files]
     df = pd.concat(dfs, ignore_index=True)
-    df = df[df["season_type"] == "REG"].copy()
+    # no season_type filter -- REG + POST both count as "games played"
 
     df["off_pass_epa_play"] = np.where(
         df["attempts"].fillna(0) > 0, df["passing_epa"] / df["attempts"], np.nan
@@ -132,52 +156,28 @@ def load_team_games(raw_dir: Path) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------
-# each team's rating RIGHT NOW (entering their next, not-yet-played game)
+# each team's rating RIGHT NOW (entering their next, not-yet-played game) --
+# a simple trailing average of their last ROLLING_WINDOW completed games,
+# any season. Replaces the old EWMA + season-carryover approach.
 # --------------------------------------------------------------------------
-def current_rating(team_games: pd.DataFrame, value_col: str) -> dict:
-    out = {}
-    for team, g in team_games.sort_values(["season", "week"]).groupby("team"):
-        running = np.nan
-        last_season = None
-        for _, row in g.iterrows():
-            if last_season is not None and row["season"] != last_season:
-                running = running * SEASON_CARRYOVER if not np.isnan(running) else running
-            v = row[value_col]
-            if not np.isnan(v):
-                running = v if np.isnan(running) else EWMA_ALPHA * v + (1 - EWMA_ALPHA) * running
-            last_season = row["season"]
-        out[team] = running
-    return out
-
-
-def current_ratings_all(team_games: pd.DataFrame, as_of_season: int) -> pd.DataFrame:
+def current_ratings_all(team_games: pd.DataFrame, window: int = ROLLING_WINDOW) -> pd.DataFrame:
+    tg = team_games.sort_values(["season", "week"])
+    cols = [("off_pass_epa_play", "off_pass"), ("off_rush_epa_play", "off_rush"),
+            ("def_pass_epa_play", "def_pass"), ("def_rush_epa_play", "def_rush")]
     rows = []
-    ratings = {}
-    for col, name in [("off_pass_epa_play", "off_pass"), ("off_rush_epa_play", "off_rush"),
-                       ("def_pass_epa_play", "def_pass"), ("def_rush_epa_play", "def_rush")]:
-        ratings[name] = current_rating(team_games, col)
-
-    teams = sorted(set(team_games["team"].dropna().astype(str)))
-    last_season_played = team_games.groupby("team")["season"].max()
-    for team in teams:
+    for team, g in tg.groupby("team"):
+        tail = g.tail(window)
         r = {"team": team}
-        for name in ratings:
-            val = ratings[name].get(team, np.nan)
-            if np.isnan(val):
-                val = 0.0
-            r[name] = val
-        # if the team hasn't played at all yet in as_of_season, apply one
-        # more carryover step so this reflects "entering as_of_season"
-        if team in last_season_played.index and last_season_played[team] < as_of_season:
-            for name in ratings:
-                r[name] = r[name] * SEASON_CARRYOVER
+        for col, name in cols:
+            v = tail[col].mean()  # pandas .mean() skips NaN automatically
+            r[name] = 0.0 if pd.isna(v) else float(v)
         rows.append(r)
     return pd.DataFrame(rows)
 
 
 # --------------------------------------------------------------------------
-# QB availability + injuries for the CURRENT week (forward-looking,
-# uses only information that would actually be known before kickoff)
+# QB availability + injuries for the CURRENT week (forward-looking, uses
+# only information that would actually be known before kickoff)
 # --------------------------------------------------------------------------
 def established_starters(games_hist: pd.DataFrame) -> dict:
     """Each team's most-common starter over their last QB_WINDOW starts, as of now."""
@@ -207,105 +207,22 @@ def injury_out_players(raw_dir: Path, season: int, week: int) -> pd.DataFrame:
     return df[["team", "position", "full_name", "report_status"]]
 
 
-# --------------------------------------------------------------------------
-# fit final models on ALL completed data (no walk-forward needed -- we're
-# predicting the future, there's nothing left to "leak")
-# --------------------------------------------------------------------------
 FEATURES = ["pass_edge", "rush_edge", "rest_diff", "wind", "dome",
             "qb_change_home", "qb_change_away", "injury_edge"]
 
 
-def load_historical_matchups(raw_dir: Path, ratings_by_week: pd.DataFrame) -> pd.DataFrame:
-    """Rebuild the same v2 feature table for every COMPLETED game, to fit final models on.
-    Fallback only -- prefer predictions_v2.csv when available (see main())."""
-    games = pd.read_csv(raw_dir / "games.csv", low_memory=False)
-    games = games[games["game_type"] == "REG"].copy()
-    games = games.dropna(subset=["spread_line", "result", "home_score", "away_score"])
-
-    home_r = ratings_by_week.rename(columns={
-        "team": "home_team", "r_off_pass": "h_off_pass", "r_off_rush": "h_off_rush",
-        "r_def_pass": "h_def_pass", "r_def_rush": "h_def_rush"})
-    away_r = ratings_by_week.rename(columns={
-        "team": "away_team", "r_off_pass": "a_off_pass", "r_off_rush": "a_off_rush",
-        "r_def_pass": "a_def_pass", "r_def_rush": "a_def_rush"})
-    m = games.merge(home_r[["game_id", "home_team", "h_off_pass", "h_off_rush", "h_def_pass", "h_def_rush"]],
-                     on=["game_id", "home_team"], how="left")
-    m = m.merge(away_r[["game_id", "away_team", "a_off_pass", "a_off_rush", "a_def_pass", "a_def_rush"]],
-                on=["game_id", "away_team"], how="left")
-    m = m.dropna(subset=["h_off_pass", "h_off_rush", "a_off_pass", "a_off_rush",
-                          "h_def_pass", "h_def_rush", "a_def_pass", "a_def_rush"])
-
-    m["pass_edge"] = (m["h_off_pass"] - m["a_def_pass"]) - (m["a_off_pass"] - m["h_def_pass"])
-    m["rush_edge"] = (m["h_off_rush"] - m["a_def_rush"]) - (m["a_off_rush"] - m["h_def_rush"])
-    m["rest_diff"] = m["home_rest"] - m["away_rest"]
-    m["wind"] = m["wind"].fillna(0.0)
-    m["dome"] = m["roof"].isin(["dome", "closed"]).astype(int)
-    m["qb_change_home"] = 0
-    m["qb_change_away"] = 0
-    m["injury_edge"] = 0.0
-    return m
-
-
-def build_ratings_by_week(team_games: pd.DataFrame) -> pd.DataFrame:
-    """Leak-free rating ENTERING each played week -- same logic as backtest_v2,
-    needed to rebuild historical matchups for fitting the final model (fallback path)."""
-    tg = team_games.sort_values(["team", "season", "week"]).reset_index(drop=True)
-
-    def seeded_for_col(col, out_col):
-        def final_ewma(group):
-            vals = group[col].to_numpy()
-            running = np.nan
-            for v in vals:
-                if np.isnan(v):
-                    continue
-                running = v if np.isnan(running) else EWMA_ALPHA * v + (1 - EWMA_ALPHA) * running
-            return running
-
-        season_final = tg.groupby(["team", "season"]).apply(final_ewma).rename("final_rating").reset_index()
-        season_final["next_season"] = season_final["season"] + 1
-        carryover = season_final[["team", "next_season", "final_rating"]].rename(
-            columns={"next_season": "season", "final_rating": "prior_final"})
-        local = tg.merge(carryover, on=["team", "season"], how="left")
-        local["prior_final"] = local["prior_final"].fillna(0.0)
-
-        def seeded(group):
-            vals = group[col].to_numpy()
-            running = group["prior_final"].iloc[0] * SEASON_CARRYOVER
-            rating = np.empty(len(vals))
-            for i, v in enumerate(vals):
-                rating[i] = running
-                if not np.isnan(v):
-                    running = EWMA_ALPHA * v + (1 - EWMA_ALPHA) * running
-            return pd.Series(rating, index=group.index)
-
-        return local.groupby(["team", "season"], group_keys=False).apply(seeded)
-
-    for col, out in [("off_pass_epa_play", "r_off_pass"), ("off_rush_epa_play", "r_off_rush"),
-                      ("def_pass_epa_play", "r_def_pass"), ("def_rush_epa_play", "r_def_rush")]:
-        tg[out] = seeded_for_col(col, out)
-    return tg[["season", "week", "team", "game_id", "r_off_pass", "r_off_rush", "r_def_pass", "r_def_rush"]]
-
-
-def fit_final_margin_model(hist: pd.DataFrame):
-    X = hist[FEATURES].to_numpy(dtype=float)
-    X = np.column_stack([np.ones(len(X)), X])
-    y = hist["result"].to_numpy(dtype=float)
-    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
-    return coef
-
-
-def fit_final_edge_calibration(preds_v2_path: Path):
-    """Prefer the real, precisely-computed v2 predictions for calibration if available."""
-    if not preds_v2_path.exists():
-        return None
-    from sklearn.linear_model import LogisticRegression
-    df = pd.read_csv(preds_v2_path)
-    df["home_cover_margin"] = df["result"] - df["spread_line"]
-    df = df[df["home_cover_margin"] != 0].copy()
-    df["home_covers"] = (df["home_cover_margin"] > 0).astype(int)
-    clf = LogisticRegression(max_iter=1000)
-    clf.fit(df[["model_edge"]].to_numpy(dtype=float), df["home_covers"].to_numpy(dtype=int))
-    return clf
+def load_coefficients(path: Path):
+    if not path.exists():
+        raise SystemExit(
+            f"No coefficients file at {path}. Run "
+            f"`python3 scripts/fit_model_coefficients.py --raw-dir raw --out {path}` "
+            f"first (needs the full historical raw/team/ archive, all seasons)."
+        )
+    data = json.loads(path.read_text())
+    coef_map = data["margin_model_coefficients"]
+    coef = np.array([coef_map["intercept"]] + [coef_map[f] for f in FEATURES])
+    calib = data.get("edge_calibration")
+    return coef, calib, data
 
 
 # --------------------------------------------------------------------------
@@ -314,8 +231,9 @@ def fit_final_edge_calibration(preds_v2_path: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-dir", default="raw", type=Path)
-    parser.add_argument("--backtest-dir", default="backtest", type=Path)
-    parser.add_argument("--predictions-v2", default="backtest/predictions_v2.csv", type=Path)
+    parser.add_argument("--coefficients", default="backtest/model_coefficients.json", type=Path,
+                         help="Pre-fitted coefficients from fit_model_coefficients.py. This "
+                              "script never fits anything itself.")
     parser.add_argument("--season", type=int, required=True)
     parser.add_argument("--db-name", default="edge-rush",
                          help="D1 database name (wrangler.toml database_name)")
@@ -326,32 +244,16 @@ def main():
                               "apply the file yourself (e.g. via the D1 MCP tool).")
     args = parser.parse_args()
 
-    print(f"Loading team-game EPA history (all seasons through what's in raw/)...")
+    print(f"Loading team-game EPA history (REG + POST, whatever seasons are in raw/team/)...")
     team_games = load_team_games(args.raw_dir)
 
-    print("Computing each team's CURRENT rating (entering their next game)...")
-    cur = current_ratings_all(team_games, args.season)
+    print(f"Computing each team's CURRENT rating (last {ROLLING_WINDOW} games, entering their next game)...")
+    cur = current_ratings_all(team_games)
 
-    if args.predictions_v2.exists():
-        # predictions_v2.csv already has precisely-computed qb_change/injury_edge
-        # features (from backtest_v2's more careful historical reconstruction) --
-        # prefer it over rebuilding a cruder version with those zeroed out.
-        print(f"Using {args.predictions_v2} as the historical fit set (has real QB/injury features)...")
-        hist = pd.read_csv(args.predictions_v2)
-    else:
-        print("No predictions_v2.csv found -- rebuilding historical matchups from raw/ "
-              "(qb_change/injury_edge will be zeroed out for this fit -- run backtest_v2.py "
-              "first for a model that actually uses those features).")
-        ratings_by_week = build_ratings_by_week(team_games)
-        hist = load_historical_matchups(args.raw_dir, ratings_by_week)
-    print(f"  fitting on {len(hist)} completed historical games")
-    coef = fit_final_margin_model(hist)
-    coef_map = dict(zip(["intercept"] + FEATURES, coef))
-    print(f"  final model coefficients: {json.dumps({k: round(v,4) for k,v in coef_map.items()})}")
-
-    calib = fit_final_edge_calibration(args.predictions_v2)
-    if calib is None:
-        print("  (no predictions_v2.csv found -- skipping calibrated probability, edge only)")
+    print(f"Loading pre-fitted coefficients from {args.coefficients}...")
+    coef, calib, coef_meta = load_coefficients(args.coefficients)
+    print(f"  fitted {coef_meta.get('fitted_at')} on {coef_meta.get('n_historical_games')} "
+          f"historical games ({coef_meta.get('rating_method')})")
 
     games = pd.read_csv(args.raw_dir / "games.csv", low_memory=False)
     games = games[(games["game_type"] == "REG") & (games["season"] == args.season)]
@@ -402,7 +304,7 @@ def main():
 
         p_home_covers = None
         if calib is not None:
-            p_home_covers = float(calib.predict_proba([[model_edge]])[0, 1])
+            p_home_covers = sigmoid(calib["coef"] * model_edge + calib["intercept"])
 
         rows.append({
             "season": int(g["season"]), "week": int(g["week"]), "game_id": g["game_id"],
