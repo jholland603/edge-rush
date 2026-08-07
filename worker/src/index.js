@@ -91,10 +91,19 @@ function json(data, status = 200) {
     headers: {
       ...CORS_HEADERS,
       "Content-Type": "application/json",
-      // Static data that only changes when someone re-runs the import --
-      // fine for the browser (and any CDN in front of this Worker) to cache
-      // for a few minutes rather than hit D1 on every page view.
-      "Cache-Control": "public, max-age=300",
+      // Was max-age=300 (5 min), written back when data only changed on a
+      // weekly manual re-import. No longer true: odds snapshots and model
+      // scores now refresh up to 16x/day (see .github/workflows/odds-
+      // snapshot.yml), and a 5-minute browser cache meant reloading the
+      // site right after a refresh could still silently show the previous
+      // response -- confirmed directly (a plain fetch() returned a stale
+      // game detail missing the odds_average.draftkings field that had
+      // just been deployed, while a cache-busted fetch to the identical
+      // URL returned the current one). D1 reads cost nothing at this
+      // traffic level, so this is now just enough to absorb rapid repeat
+      // loads (e.g. several tabs open at once), not a real staleness
+      // window.
+      "Cache-Control": "public, max-age=30",
     },
   });
 }
