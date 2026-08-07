@@ -163,23 +163,6 @@
     return takeaways - giveaways;
   }
 
-  // Fewer than this many games played this season -> "to date" is too thin
-  // a sample to be worth showing on its own (0 games entering Week 1), so
-  // fall back to that team's full prior-season line instead. Reverts on
-  // its own once real current-season data accumulates. Mirrors
-  // SAMPLE_THIN_GAMES in the Worker (kept as a literal in both places --
-  // site and Worker are separate deploys).
-  const SEASON_THIN_GAMES = 4;
-
-  function effectiveToDateStats(side) {
-    const games = side.season_to_date && side.season_to_date.games_played;
-    const thin = !games || games < SEASON_THIN_GAMES;
-    if (thin && side.prior_season_full && side.prior_season_full.games_played) {
-      return { stats: side.prior_season_full, usingPrior: true };
-    }
-    return { stats: side.season_to_date, usingPrior: false };
-  }
-
   function renderSignals(signals, g, detail) {
     if (!signals) {
       signalsWrap.innerHTML = "";
@@ -310,28 +293,22 @@
       signalCard("Referee", "untested", referee.name ? Util.escapeHtml(referee.name) : "-", referee.note)
     );
 
-    const passDefAwayLabel = g.away_team + (pass_defense_allowed.away_season !== g.season ? ` (${pass_defense_allowed.away_season})` : "");
-    const passDefHomeLabel = g.home_team + (pass_defense_allowed.home_season !== g.season ? ` (${pass_defense_allowed.home_season})` : "");
     cards.push(
       signalCard(
         "Pass Defense Allowed",
         "untested",
-        pairRows(passDefAwayLabel, pass_defense_allowed.away, passDefHomeLabel, pass_defense_allowed.home, false),
+        pairRows(g.away_team, pass_defense_allowed.away, g.home_team, pass_defense_allowed.home, false),
         pass_defense_allowed.note
       )
     );
 
-    const awayTOEff = effectiveToDateStats(detail.away);
-    const homeTOEff = effectiveToDateStats(detail.home);
-    const awayTO = turnoverMargin(awayTOEff.stats);
-    const homeTO = turnoverMargin(homeTOEff.stats);
-    const toAwayLabel = g.away_team + (awayTOEff.usingPrior ? ` (${g.season - 1})` : "");
-    const toHomeLabel = g.home_team + (homeTOEff.usingPrior ? ` (${g.season - 1})` : "");
+    const awayTO = turnoverMargin(detail.away.recent);
+    const homeTO = turnoverMargin(detail.home.recent);
     cards.push(
       signalCard(
         "Turnover Margin",
         "untested",
-        pairRows(toAwayLabel, awayTO, toHomeLabel, homeTO, true, (v) => (v === null || v === undefined ? "-" : Util.signed(v, 0))),
+        pairRows(g.away_team, awayTO, g.home_team, homeTO, true, (v) => (v === null || v === undefined ? "-" : Util.signed(v, 0))),
         turnover_margin_note
       )
     );
@@ -352,9 +329,8 @@
             `;
           })
           .join("")
-      : `<span class="text-faint">No common opponents played yet this season.</span>`;
-    const commonOppTitle = "Common Opponents" + (common_opponents.season_used !== g.season ? ` (${common_opponents.season_used})` : "");
-    cards.push(signalCard(commonOppTitle, "untested", commonOppRows, common_opponents.note));
+      : `<span class="text-faint">No common opponents in either team's recent games.</span>`;
+    cards.push(signalCard("Common Opponents", "untested", commonOppRows, common_opponents.note));
 
     signalsWrap.innerHTML = cards.join("");
   }
@@ -452,17 +428,15 @@
   // season" at once -- the view toggle in game.html switches scope instead
   // of doubling the width to show both.
   function renderCompare(detail, view) {
-    // "Full season" is a hindsight/retrospective view (only meaningful once
-    // games exist), so it's left alone -- the early-season fallback only
-    // applies to "To date", which is otherwise empty for the first few
-    // weeks of a new season.
-    const awayEff = view === "full_season" ? { stats: detail.away.full_season, usingPrior: false } : effectiveToDateStats(detail.away);
-    const homeEff = view === "full_season" ? { stats: detail.home.full_season, usingPrior: false } : effectiveToDateStats(detail.home);
-    const awayStats = awayEff.stats;
-    const homeStats = homeEff.stats;
+    // "Full season" is a hindsight/retrospective view of the current
+    // season only (most useful for a past game already played). "Recent"
+    // is the rolling last-N-games window from the Worker (RECENT_GAMES_
+    // WINDOW), which spans season boundaries on its own -- no separate
+    // early-season handling needed here anymore.
+    const awayStats = view === "full_season" ? detail.away.full_season : detail.away.recent;
+    const homeStats = view === "full_season" ? detail.home.full_season : detail.home.recent;
     const awayGames = awayStats && awayStats.games_played;
     const homeGames = homeStats && homeStats.games_played;
-    const priorYear = detail.game.season - 1;
 
     const cards = STAT_GROUPS.map(
       (group) => `
@@ -481,8 +455,7 @@
 
     compareWrap.innerHTML = `
       <p class="text-faint" style="margin-bottom:var(--space-3);">
-        Games: ${Util.escapeHtml(detail.away.team)} ${awayGames ?? "-"}${awayEff.usingPrior ? ` (${priorYear})` : ""}
-        &middot; ${Util.escapeHtml(detail.home.team)} ${homeGames ?? "-"}${homeEff.usingPrior ? ` (${priorYear})` : ""}
+        Games: ${Util.escapeHtml(detail.away.team)} ${awayGames ?? "-"} &middot; ${Util.escapeHtml(detail.home.team)} ${homeGames ?? "-"}
       </p>
       <div class="signals-grid">${cards}</div>
     `;
@@ -534,7 +507,7 @@
   }
 
   const compareToggle = document.getElementById("compare-toggle");
-  let compareView = "to_date";
+  let compareView = "recent";
 
   try {
     const detail = await Data.getGameDetail(gameId);

@@ -1823,3 +1823,88 @@ rather than showing blanks.
   fields) and the `site/` push (client-side switching logic) to take
   effect together -- half-deployed would either 404 on missing fields or
   silently show no fallback.
+
+## Superseded almost immediately: rolling last-10-games window replaces the season-boundary fallback above
+
+Jeff, after seeing the fallback design: asked whether it was using all of
+last season (yes -- full season including playoffs, no filter on
+`game_type_code`) and how the first few 2026 games would factor in
+(they wouldn't -- the fallback above was a hard cutover, 100% last season
+below 4 games played, 100% this season at 4+, no blending). His proposal:
+use a fixed-size rolling window (his suggestion: 10 games, "including
+playoffs") instead of a season-boundary snapshot, so recency does the work
+continuously rather than a one-time threshold flip -- "as the season
+progresses, more of this year's games and fewer of last year's will
+count." Agreed this is a better design than what shipped an hour earlier
+and replaced it outright rather than layering on top.
+
+**Discussed and deferred:** major-injury-aware weighting (his example:
+Joe Burrow) -- flagged as a real gap a pure game-count window can't close
+on its own (a rolling window can't distinguish "recent form" from "recent
+games happened to be backup-QB games"), but explicitly out of scope for
+this change. The QB Status card already surfaces *this specific game's*
+starter-vs-established-starter mismatch, which covers part of the gap for
+the game being viewed, just not the aggregate stat window itself. Revisit
+later if wanted.
+
+**Design:**
+- **`RECENT_GAMES_WINDOW = 10`**, chosen over a raw week-number cutoff
+  or season boundary. No backtest to optimize this against -- these are
+  descriptive panels, not model inputs -- so it's a judgment call, and 10
+  felt like a reasonable middle ground (small enough to stay recency-
+  weighted, large enough not to swing wildly on one blowout).
+  - Everything context-dependent (`pass_defense_allowed`, `common_opponents`,
+    `turnover_margin`, Team Comparison's non-"Full season" view) now draws
+    from this same rolling window, consistently.
+- **Ordered by actual calendar date (`g.gameday`), not season/week.**
+  Necessary for playoffs to sort in correctly -- `game_type_code` values
+  are REG/WC/DIV/CON/SB, and while `week` happens to keep incrementing past
+  18 into the postseason in this data set (confirmed via direct query --
+  e.g. PHI's 2024 Super Bowl run is week 19-22), gameday is the more
+  robust, self-evidently-correct way to interleave two seasons' worth of
+  games and isn't dependent on that continuation holding.
+- **No season-fallback bookkeeping left at all** -- this is strictly
+  simpler than what it replaced. No `SAMPLE_THIN_GAMES`/`SEASON_THIN_GAMES`
+  constants, no `homeThin`/`awayThin`, no `prior_season_full` field, no
+  per-stat "(2025)" labels, no `effectiveToDateStats()` helper on the
+  client. The window just always draws from whichever games are most
+  recent, so it needs zero special-casing for "is the season new."
+  `full_season` (the current-season-only, hindsight/hindsight-view toggle)
+  is untouched -- still exactly what it was before either of today's
+  changes.
+- **Team Comparison's "To date" toggle renamed to "Last 10"** (`data-view`
+  changed `to_date` -> `recent`) since it's no longer a to-date concept at
+  all -- it's honest about what it's actually showing now.
+
+**Implementation:**
+- Worker: new `getTeamRollingAggregate(DB, team, beforeGameday, limit)`
+  (replaces the `season_to_date` call in `getGameDetail` -- `full_season`
+  still uses the original `getTeamAggregate`), `getTeamPassDefenseAllowedRolling()`
+  and `getTeamRollingResults()` (replace `getTeamPassDefenseAllowed()`/
+  `getTeamSeasonResults()`, which are now unused and were removed rather
+  than left dead). Each runs one query to grab the `team_game_id`s for a
+  team's last N *played* games before a given date, as a subquery joined
+  straight into the same stat-column aggregation `getTeamAggregate` already
+  used -- same query shape, different window. `getGameDetail`'s `home`/
+  `away` response fields renamed `season_to_date` -> `recent` to match
+  what they now actually contain.
+- Site (`page-game.js`): removed `effectiveToDateStats()`/
+  `SEASON_THIN_GAMES` and all the "(YYYY)" label-building logic entirely --
+  `renderCompare()` and the Turnover Margin/Pass Defense Allowed/Common
+  Opponents cards read straight from `detail.away.recent`/
+  `detail.home.recent` now, no branching.
+- **Verified two ways:**
+  1. `jsdom` harness (same approach as every other check this session) --
+     mocked a Week 1 2026 game with a 10-game `recent` line, confirmed
+     every card renders correctly with zero leftover season labels, and
+     that clicking "Full season" correctly swaps to the separate
+     `full_season` field instead.
+  2. **Ran the actual rolling-window SQL directly against production D1**
+     for a real game (PHI entering `2025_03_LA_PHI`, a real Week 3 2025
+     game): confirmed the 10-game result set is Weeks 1-2 of 2025, then
+     PHI's entire 2024 Super Bowl run in the correct order (SB, CON, DIV,
+     WC), then back into 2024 regular season -- i.e. the gameday-ordering
+     fix for the REG/POST boundary works exactly as intended on real data,
+     not just the synthetic jsdom fixture.
+- Same deploy note as above: needs a Worker redeploy for the query changes
+  and a `site/` push for the client changes, together.
