@@ -71,6 +71,49 @@ h1, h2, h3, h4 {
 }
 h1 { font-size: 1.9rem; }
 h2 { font-size: 1.35rem; margin-top: var(--space-6); }
+
+/* game.html's collapsible sections (Situational signals, Odds movement,
+   Team comparison, Head-to-head) -- native <details>/<summary> so it works
+   with zero JS. `<h2>` moves inside `<summary>` (its own margin zeroed out
+   below, spacing comes from .page-section's margin-top instead) and the
+   default disclosure marker is swapped for a small rotating chevron that
+   matches the site's other directional-glyph patterns (.value-lead,
+   .odds-arrow). Open/closed defaults are per-section `open` attributes in
+   game.html, not CSS -- Jeff wanted Odds movement and Head-to-head
+   collapsed by default, the rest open. */
+.page-section {
+  margin-top: var(--space-6);
+}
+.page-section > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.page-section > summary::-webkit-details-marker {
+  display: none;
+}
+.page-section > summary::before {
+  content: "\25B8";
+  display: inline-block;
+  color: var(--color-text-dim);
+  font-size: 0.8em;
+  transition: transform 0.15s ease;
+}
+.page-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+.page-section > summary h2 {
+  margin: 0;
+}
+.page-section > summary:hover h2 {
+  color: var(--color-accent);
+}
+.page-section > *:not(summary) {
+  margin-top: var(--space-3);
+}
 h3 { font-size: 1.05rem; color: var(--color-text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.78rem; }
 
 p { color: var(--color-text-dim); }

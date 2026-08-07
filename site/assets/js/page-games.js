@@ -148,9 +148,9 @@
   }
 
   // Situational-signal / stat lean tally -- "1 point per" for now (Jeff:
-  // weighting comes later). Gray "Ahead: TEAM (n-m)" badge, same language
-  // and style as Team Comparison's per-category tally on game.html, NOT
-  // the green "Favors" badge -- this combined tally deliberately mixes
+  // weighting comes later). Gray "TEAM (n-m)" badge (no "Ahead:" prefix --
+  // Jeff: unnecessary, the team name + score already says it), NOT the
+  // green "Favors" badge -- this combined tally deliberately mixes
   // tested-and-real signals (Big Home Dog, QB Status) with purely
   // descriptive ones (Draft Capital, Pass Defense Allowed, etc.) at equal
   // weight, so it doesn't have the same backing "Favors" implies elsewhere
@@ -164,7 +164,7 @@
     }
     const leader = home_points > away_points ? g.home_team : g.away_team;
     const score = home_points > away_points ? `${home_points}-${away_points}` : `${away_points}-${home_points}`;
-    return `<span class="badge neutral">Ahead: ${Util.escapeHtml(leader)} (${score})</span>`;
+    return `<span class="badge neutral">${Util.escapeHtml(leader)} (${score})</span>`;
   }
 
   // Small up/down arrow next to the Line/Total cells when the average
