@@ -78,6 +78,11 @@ const Data = {
 
   getTrends: () => fetchJSON(`${API_BASE}/trends`),
 
+  // Top-10-per-position fantasy rankings for a given week -- see
+  // getFantasyRankings() in the Worker for the projection methodology.
+  getFantasyRankings: (season, week, position) =>
+    fetchJSON(`${API_BASE}/fantasy/${season}/${week}/${encodeURIComponent(position)}`),
+
   // Free-form historical trend query -- not cached (each filter combination
   // is effectively a unique query, caching would just grow _cache forever
   // for no benefit since nobody re-runs the exact same filter set twice in

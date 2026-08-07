@@ -230,6 +230,16 @@ export default {
         return json(result);
       }
 
+      if ((m = path.match(/^\/fantasy\/(\d{4})\/(\d{1,2})\/([A-Za-z]+)$/))) {
+        const position = m[3].toUpperCase();
+        if (!FANTASY_POSITIONS.includes(position)) {
+          return json({ error: `unknown position ${position}, expected one of ${FANTASY_POSITIONS.join(", ")}` }, 400);
+        }
+        const result = await getFantasyRankings(DB, Number(m[1]), Number(m[2]), position);
+        if (result === null) return notFound(`no schedule for ${m[1]} week ${m[2]}`);
+        return json(result);
+      }
+
       return notFound();
     } catch (err) {
       return json({ error: String((err && err.message) || err) }, 500);
@@ -2216,4 +2226,333 @@ async function getTeamStatPlayers(DB, team, statId, from, to, scope, limit) {
     .bind(team, from, to, limit)
     .all();
   return { stat: statId, label: spec.label, team, from, to, scope: normalizeScope(scope), players: results };
+}
+
+// ---------------------------------------------------------------------------
+// Fantasy rankings -- top 10 per position for a given week, ranked by a
+// matchup-adjusted projection: each player's own trailing-N-game average
+// (same season-spanning rolling-window convention as RECENT_GAMES_WINDOW
+// everywhere else in this file) times a multiplier for how many fantasy
+// points their Week opponent has recently allowed to that position, relative
+// to the league average. This is a convenience ranking, not a backtested
+// model -- unlike the betting model, nothing here has been checked against
+// actual weekly outcomes for predictive skill. Jeff's own DraftKings-style
+// use case: no lineup-slot logic, just the best players at each position.
+// ---------------------------------------------------------------------------
+
+const FANTASY_POSITIONS = ["QB", "RB", "WR", "TE", "K", "DST"];
+
+// Standard fantasy kicker scoring (3pt for any FG under 40, 4pt 40-49, 5pt
+// 50+, 1pt PAT, -1 missed FG) and standard DST scoring (1/sack, 2/INT,
+// 2/fumble recovery, 2/safety, 6/defensive or return TD, plus a standard
+// points-allowed tier table) -- not verified against DraftKings' own current
+// rule sheet specifically (draftkings.com isn't reachable from this
+// project's browsing tools, blocked as a gambling site), so treat these as a
+// close, standard approximation rather than exact payout math. QB/RB/WR/TE
+// use nflverse's own precomputed fantasy_points_ppr instead of a formula
+// here -- reliable, but it's nflverse's standard PPR formula, not
+// necessarily byte-identical to DK's own (e.g. DK's 100-yard rush/rec
+// bonuses aren't in nflverse's column). Point values below are easy to
+// adjust if exact DK parity ever matters more than directional ranking.
+const KICKER_SCORE_SQL = `
+  (COALESCE(s.fg_made_0_19,0)*3 + COALESCE(s.fg_made_20_29,0)*3 + COALESCE(s.fg_made_30_39,0)*3
+   + COALESCE(s.fg_made_40_49,0)*4 + COALESCE(s.fg_made_50_59,0)*5 + COALESCE(s.fg_made_60_,0)*5
+   + COALESCE(s.pat_made,0)*1 - COALESCE(s.fg_missed,0)*1)
+`;
+
+// Every team, this week's opponent, and this week's earliest kickoff date --
+// used as a single uniform "before" cutoff for every rolling average below.
+// Slightly conservative for teams playing later in the week (a Sunday/Monday
+// team's trailing window is a few days less current than it could be), but
+// avoids per-team cutoff bookkeeping for a tradeoff that doesn't matter at
+// weekly granularity, and guarantees nothing from this week ever leaks into
+// its own projection.
+async function getFantasyWeekContext(DB, season, week) {
+  const { results } = await DB.prepare(
+    `
+    SELECT home_team AS team, away_team AS opponent_team, gameday FROM game WHERE season = ? AND week = ?
+    UNION ALL
+    SELECT away_team AS team, home_team AS opponent_team, gameday FROM game WHERE season = ? AND week = ?
+    `
+  )
+    .bind(season, week, season, week)
+    .all();
+  if (!results.length) return null;
+  const opponents = {};
+  let cutoff = null;
+  for (const row of results) {
+    opponents[row.team] = row.opponent_team;
+    if (cutoff === null || row.gameday < cutoff) cutoff = row.gameday;
+  }
+  return { opponents, cutoff };
+}
+
+// QB/RB/WR/TE/K share the same shape: player-level rows, filtered by
+// position_code, with a SQL expression giving that player-game's fantasy
+// score. Ranks every player's game history by recency (rn), takes rn=1 as
+// their current team (most recent game at this position -- filtered below by
+// a recency cutoff so a long-retired player's old team doesn't get treated
+// as current, since team_abbr values don't change and would otherwise still
+// join fine against today's opponent map), and averages rn<=N as their own
+// trailing form.
+async function getSkillPositionOwnAverages(DB, position, scoreSql, fromTable, cutoff, window) {
+  const { results } = await DB.prepare(
+    `
+    WITH ranked AS (
+      SELECT pg.player_id, pg.team, ${scoreSql} AS score, g.gameday,
+             ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.gameday DESC) AS rn
+      FROM player_game pg
+      JOIN game g ON g.game_id = pg.game_id
+      JOIN ${fromTable} s ON s.player_game_id = pg.player_game_id
+      WHERE pg.position_code = ? AND g.result IS NOT NULL AND g.gameday < ?
+    ),
+    current_team AS (
+      SELECT player_id, team, gameday AS last_game FROM ranked WHERE rn = 1
+    ),
+    own_avg AS (
+      SELECT player_id, AVG(score) AS own_avg, COUNT(*) AS games_played
+      FROM ranked WHERE rn <= ?
+      GROUP BY player_id
+    )
+    SELECT ct.player_id, p.display_name, ct.team, ct.last_game, oa.own_avg, oa.games_played
+    FROM current_team ct
+    JOIN own_avg oa ON oa.player_id = ct.player_id
+    JOIN player p ON p.player_id = ct.player_id
+    -- Only players who've played this position within the last ~2 seasons
+    -- (730 days) -- excludes retired/long-inactive players.
+    WHERE julianday(?) - julianday(ct.last_game) <= 730
+    `
+  )
+    .bind(position, cutoff, window, cutoff)
+    .all();
+  return results;
+}
+
+// Points allowed to `position` per game, per team, over that team's last N
+// games -- the standard "matchup rating" input. Averaged again across all
+// teams by the caller to get the league-average baseline for the multiplier.
+async function getAllowedToPosition(DB, position, scoreSql, fromTable, cutoff, window) {
+  const { results } = await DB.prepare(
+    `
+    WITH recent_team_games AS (
+      SELECT tg.team, tg.game_id,
+             ROW_NUMBER() OVER (PARTITION BY tg.team ORDER BY g.gameday DESC) AS rn
+      FROM team_game tg JOIN game g ON g.game_id = tg.game_id
+      WHERE g.result IS NOT NULL AND g.gameday < ?
+    ),
+    limited AS (SELECT team, game_id FROM recent_team_games WHERE rn <= ?),
+    per_game_allowed AS (
+      SELECT l.team, l.game_id, SUM(${scoreSql}) AS allowed_points
+      FROM limited l
+      JOIN player_game pg ON pg.game_id = l.game_id AND pg.opponent_team = l.team
+      JOIN ${fromTable} s ON s.player_game_id = pg.player_game_id
+      WHERE pg.position_code = ?
+      GROUP BY l.team, l.game_id
+    )
+    SELECT team, AVG(allowed_points) AS avg_allowed, COUNT(*) AS games
+    FROM per_game_allowed
+    GROUP BY team
+    `
+  )
+    .bind(cutoff, window, position)
+    .all();
+  const byTeam = {};
+  let sum = 0;
+  for (const row of results) {
+    byTeam[row.team] = row.avg_allowed;
+    sum += row.avg_allowed;
+  }
+  return { byTeam, leagueAvg: results.length ? sum / results.length : null };
+}
+
+// DST is team-level, not player-level, and its "matchup" runs the opposite
+// direction from every other position: a good matchup means facing a WEAK
+// opposing offense, not a defense that "allows a lot" (there's no such
+// thing as a defense allowing fantasy points to another defense). Multiplier
+// is league-average points scored / this week's opponent's own recent
+// scoring average -- a below-average offense pushes the multiplier above 1.
+async function getDstOwnAverages(DB, cutoff, window) {
+  const { results } = await DB.prepare(
+    `
+    WITH base AS (
+      SELECT tg.team, g.gameday, d.def_sacks, d.def_interceptions, d.def_fumbles, d.def_safeties, d.def_tds,
+             st.pt_return_tds,
+             CASE WHEN g.home_team = tg.team THEN g.away_score ELSE g.home_score END AS pts_allowed
+      FROM team_game tg
+      JOIN game g ON g.game_id = tg.game_id
+      JOIN team_game_defense d ON d.team_game_id = tg.team_game_id
+      LEFT JOIN team_game_special_teams st ON st.team_game_id = tg.team_game_id
+      WHERE g.result IS NOT NULL AND g.gameday < ?
+    ),
+    scored AS (
+      SELECT team, gameday,
+        (COALESCE(def_sacks,0)*1 + COALESCE(def_interceptions,0)*2 + COALESCE(def_fumbles,0)*2
+         + COALESCE(def_safeties,0)*2 + COALESCE(def_tds,0)*6 + COALESCE(pt_return_tds,0)*6
+         + CASE
+             WHEN pts_allowed = 0 THEN 10
+             WHEN pts_allowed BETWEEN 1 AND 6 THEN 7
+             WHEN pts_allowed BETWEEN 7 AND 13 THEN 4
+             WHEN pts_allowed BETWEEN 14 AND 20 THEN 1
+             WHEN pts_allowed BETWEEN 21 AND 27 THEN 0
+             WHEN pts_allowed BETWEEN 28 AND 34 THEN -1
+             ELSE -4
+           END) AS score,
+        ROW_NUMBER() OVER (PARTITION BY team ORDER BY gameday DESC) AS rn
+      FROM base
+    )
+    SELECT team, AVG(score) AS own_avg, COUNT(*) AS games_played, MAX(gameday) AS last_game
+    FROM scored WHERE rn <= ?
+    GROUP BY team
+    -- Same recency guard as getSkillPositionOwnAverages -- this schema
+    -- keeps orphaned historical team_abbr values around (e.g. "OAK" has
+    -- team_game rows only through the 2002 season, unrelated to the "LV"
+    -- rows used for every game since; both exist as distinct entries in
+    -- the `team` dimension table). Without this, a defunct abbreviation
+    -- with a handful of 20-year-old games can rank purely because rn<=N
+    -- trivially includes its entire (tiny, ancient) history. In practice
+    -- the opponent-map filter downstream in getFantasyRankings would
+    -- already drop these (they're not a valid current-week opponent), but
+    -- this makes the guarantee explicit here too rather than relying on
+    -- that alone.
+    HAVING julianday(?) - julianday(MAX(gameday)) <= 730
+    `
+  )
+    .bind(cutoff, window, cutoff)
+    .all();
+  return results;
+}
+
+// Each team's own recent scoring average (points, not fantasy points) --
+// the input to the DST matchup multiplier above (a weak recent offense is a
+// good DST matchup for whoever's facing them this week).
+async function getTeamPointsScored(DB, cutoff, window) {
+  const { results } = await DB.prepare(
+    `
+    WITH recent AS (
+      SELECT tg.team,
+             CASE WHEN g.home_team = tg.team THEN g.home_score ELSE g.away_score END AS points_scored,
+             ROW_NUMBER() OVER (PARTITION BY tg.team ORDER BY g.gameday DESC) AS rn
+      FROM team_game tg JOIN game g ON g.game_id = tg.game_id
+      WHERE g.result IS NOT NULL AND g.gameday < ?
+    )
+    SELECT team, AVG(points_scored) AS avg_scored, COUNT(*) AS games
+    FROM recent WHERE rn <= ?
+    GROUP BY team
+    `
+  )
+    .bind(cutoff, window)
+    .all();
+  const byTeam = {};
+  let sum = 0;
+  for (const row of results) {
+    byTeam[row.team] = row.avg_scored;
+    sum += row.avg_scored;
+  }
+  return { byTeam, leagueAvg: results.length ? sum / results.length : null };
+}
+
+// Most recent injury-report status per player for this exact (season, week)
+// -- empty for a week that hasn't had a report filed yet (normal well before
+// game week, not an error). A team can file more than one update in a week;
+// ORDER BY date_modified DESC + first-wins in JS keeps only the latest.
+async function getInjuryStatuses(DB, season, week, playerIds) {
+  if (!playerIds.length) return {};
+  const placeholders = playerIds.map(() => "?").join(",");
+  const { results } = await DB.prepare(
+    `
+    SELECT player_id, report_status, date_modified
+    FROM injury_report
+    WHERE season = ? AND week = ? AND player_id IN (${placeholders})
+    ORDER BY date_modified DESC
+    `
+  )
+    .bind(season, week, ...playerIds)
+    .all();
+  const statuses = {};
+  for (const row of results) {
+    if (!(row.player_id in statuses)) statuses[row.player_id] = row.report_status;
+  }
+  return statuses;
+}
+
+async function getFantasyRankings(DB, season, week, position) {
+  const ctx = await getFantasyWeekContext(DB, season, week);
+  if (!ctx) return null;
+  const { opponents, cutoff } = ctx;
+  const window = RECENT_GAMES_WINDOW;
+
+  if (position === "DST") {
+    const [ownRows, offense] = await Promise.all([
+      getDstOwnAverages(DB, cutoff, window),
+      getTeamPointsScored(DB, cutoff, window),
+    ]);
+    const rankings = ownRows
+      .map((r) => {
+        const opponent = opponents[r.team] || null;
+        const oppScored = opponent ? offense.byTeam[opponent] : null;
+        const multiplier = oppScored && offense.leagueAvg ? offense.leagueAvg / oppScored : 1;
+        return {
+          team: r.team,
+          opponent,
+          own_avg: r.own_avg,
+          games_played: r.games_played,
+          matchup_multiplier: multiplier,
+          opponent_points_scored_avg: oppScored,
+          league_avg_points_scored: offense.leagueAvg,
+          projected: r.own_avg * multiplier,
+        };
+      })
+      .filter((r) => r.opponent)
+      .sort((a, b) => b.projected - a.projected)
+      .slice(0, 10);
+    return { season, week, position, cutoff, window, scoring_note: "Standard DST scoring, not verified against DraftKings' current rule sheet -- see comment on DST_SCORE_SQL in the Worker source.", rankings };
+  }
+
+  const scoreSql = position === "K" ? KICKER_SCORE_SQL : "s.fantasy_points_ppr";
+  const fromTable = position === "K" ? "player_game_special_teams" : "player_game_offense";
+
+  const [ownRows, allowed] = await Promise.all([
+    getSkillPositionOwnAverages(DB, position, scoreSql, fromTable, cutoff, window),
+    getAllowedToPosition(DB, position, scoreSql, fromTable, cutoff, window),
+  ]);
+
+  const candidates = ownRows
+    .map((r) => {
+      const opponent = opponents[r.team] || null;
+      const oppAllowed = opponent ? allowed.byTeam[opponent] : null;
+      const multiplier = oppAllowed && allowed.leagueAvg ? oppAllowed / allowed.leagueAvg : 1;
+      return {
+        player_id: r.player_id,
+        name: r.display_name,
+        team: r.team,
+        opponent,
+        own_avg: r.own_avg,
+        games_played: r.games_played,
+        last_game: r.last_game,
+        matchup_multiplier: multiplier,
+        opponent_allowed_avg: oppAllowed,
+        league_avg_allowed: allowed.leagueAvg,
+        projected: r.own_avg * multiplier,
+      };
+    })
+    .filter((r) => r.opponent);
+
+  const playerIds = candidates.map((c) => c.player_id);
+  const injuries = await getInjuryStatuses(DB, season, week, playerIds);
+  for (const c of candidates) c.injury_status = injuries[c.player_id] || null;
+
+  // Exclude players ruled Out -- can't recommend starting them. Questionable/
+  // Doubtful stay in, flagged, since those are still real game-time-decision
+  // players worth seeing ranked rather than silently dropped.
+  const rankings = candidates
+    .filter((c) => c.injury_status !== "Out")
+    .sort((a, b) => b.projected - a.projected)
+    .slice(0, 10);
+
+  const scoringNote =
+    position === "K"
+      ? "Standard kicker scoring, not verified against DraftKings' current rule sheet -- see comment on KICKER_SCORE_SQL in the Worker source."
+      : "nflverse's standard PPR fantasy_points_ppr, not necessarily identical to DraftKings' exact formula (e.g. 100-yard rush/rec bonuses).";
+
+  return { season, week, position, cutoff, window, scoring_note: scoringNote, rankings };
 }

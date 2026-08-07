@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Edge Rush &mdash; Fantasy</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<site-header active="fantasy"></site-header>
+
+<main>
+  <div class="page-header">
+    <h1>Fantasy Rankings</h1>
+    <p>Top 10 per position for a given week, ranked by a matchup-adjusted projection &mdash; each player's own recent
+      form times how many fantasy points their Week opponent has recently allowed to that position. Not backtested
+      like the betting model &mdash; a directional convenience ranking, not a validated projection system.</p>
+  </div>
+
+  <div class="controls">
+    <div class="control">
+      <label for="season-select">Season</label>
+      <select id="season-select"></select>
+    </div>
+    <div class="control">
+      <label for="week-select">Week</label>
+      <select id="week-select"></select>
+    </div>
+  </div>
+
+  <div class="view-toggle" id="position-toggle">
+    <button type="button" data-position="QB" class="active">QB</button>
+    <button type="button" data-position="RB">RB</button>
+    <button type="button" data-position="WR">WR</button>
+    <button type="button" data-position="TE">TE</button>
+    <button type="button" data-position="K">K</button>
+    <button type="button" data-position="DST">DST</button>
+  </div>
+
+  <p class="text-faint" id="scoring-note" style="margin: var(--space-2) 0 var(--space-3);"></p>
+
+  <div class="table-wrap" id="fantasy-table-wrap">
+    <div class="loading">Loading&hellip;</div>
+  </div>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/page-fantasy.js"></script>
+</body>
+</html>
