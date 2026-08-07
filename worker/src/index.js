@@ -5,6 +5,13 @@
  * Routes (all GET, JSON responses):
  *   /index                              -- replaces index.json
  *   /games/:season                      -- replaces data/games/{season}.json
+ *   /games/:season/:week/leans          -- per-game situational/stat "lean" tallies for
+ *                                           that week, plus an `odds_movement` block per
+ *                                           game (average spread/total at the earliest vs.
+ *                                           latest odds_snapshot, only present once a game
+ *                                           has moved >= 1pt on either -- see
+ *                                           getOddsMovement()). Powers games.html's
+ *                                           direction-arrow cells.
  *   /teams/:season                      -- replaces data/teams/{season}.json
  *   /players/season/:season             -- replaces data/players/season/{season}.json
  *   /players/career/:playerId           -- replaces data/players/career/{playerId}.json
@@ -28,8 +35,11 @@
  *                                           of whether it tested out as predictive, see
  *                                           getGameSituationalSignals), each team's
  *                                           season-to-date (before this game) and full-season
- *                                           stat totals, and head-to-head history between the
- *                                           two teams
+ *                                           stat totals, head-to-head history between the two
+ *                                           teams, and `odds_history` -- every odds_snapshot
+ *                                           row for this game, every bookmaker, unfiltered
+ *                                           (the games.html summary's 1pt movement threshold
+ *                                           does not apply here, see getGameDetail())
  *   /game/:gameId/players/:team         -- every player on `team` who recorded a snap of
  *                                           offense in this game (passing/rushing/receiving),
  *                                           powers the "show players" expand row on the
@@ -1404,6 +1414,82 @@ function tallyStats(homeStats, awayStats) {
   return { home_points: home, away_points: away };
 }
 
+// Minimum average movement (points) before games.html shows an arrow at
+// all -- Jeff's call: small noise between bookmakers/snapshots shouldn't
+// read as "the line is moving." Applies to spread and total independently.
+const ODDS_MOVEMENT_THRESHOLD = 1.0;
+
+// NOTE ON SIGN CONVENTION: `odds_snapshot.spread_line` (from
+// fetch_odds_snapshot.py / The Odds API) is the HOME team's own bookmaker
+// line, standard sportsbook convention -- negative means the home team is
+// favored. This is the OPPOSITE sign convention from `game.spread_line`
+// (nflverse, this codebase's existing convention -- positive means home
+// favored, see Util.spreadForTeam on the site). Don't reuse
+// Util.favoredTeamLine on raw odds_snapshot values without accounting for
+// this -- it'll show the wrong team as favored. Only the *direction of
+// change* (open vs. latest average) is used below, which is self-consistent
+// regardless of which convention you pick, so this doesn't need converting
+// for the arrow logic -- just documented so nobody gets bitten wiring up
+// the per-book detail table later.
+//
+// Batched (one query, not one per game) average spread/total at each
+// game's EARLIEST and LATEST snapshot timestamp, across all bookmakers.
+// Games with only one snapshot timestamp so far are silently omitted (the
+// WHERE clause requires two distinct timestamps) -- no movement to report
+// yet, not an error.
+async function getOddsMovement(DB, gameIds) {
+  if (!gameIds.length) return {};
+  const placeholders = gameIds.map(() => "?").join(",");
+  const { results } = await DB.prepare(
+    `
+    WITH bounds AS (
+      SELECT game_id, MIN(snapshot_time) AS first_time, MAX(snapshot_time) AS last_time
+      FROM odds_snapshot
+      WHERE game_id IN (${placeholders})
+      GROUP BY game_id
+      HAVING MIN(snapshot_time) != MAX(snapshot_time)
+    ),
+    open_avg AS (
+      SELECT o.game_id, AVG(o.spread_line) AS spread_line, AVG(o.total_line) AS total_line
+      FROM odds_snapshot o JOIN bounds b ON o.game_id = b.game_id AND o.snapshot_time = b.first_time
+      GROUP BY o.game_id
+    ),
+    latest_avg AS (
+      SELECT o.game_id, AVG(o.spread_line) AS spread_line, AVG(o.total_line) AS total_line
+      FROM odds_snapshot o JOIN bounds b ON o.game_id = b.game_id AND o.snapshot_time = b.last_time
+      GROUP BY o.game_id
+    )
+    SELECT b.game_id,
+           o.spread_line AS open_spread, l.spread_line AS latest_spread,
+           o.total_line AS open_total, l.total_line AS latest_total
+    FROM bounds b
+    JOIN open_avg o ON o.game_id = b.game_id
+    JOIN latest_avg l ON l.game_id = b.game_id
+    `
+  )
+    .bind(...gameIds)
+    .all();
+
+  const movement = {};
+  for (const row of results) {
+    const spreadDelta = row.open_spread !== null && row.latest_spread !== null ? row.latest_spread - row.open_spread : null;
+    const totalDelta = row.open_total !== null && row.latest_total !== null ? row.latest_total - row.open_total : null;
+    movement[row.game_id] = {
+      spread: {
+        open: row.open_spread, latest: row.latest_spread,
+        moved: spreadDelta !== null && Math.abs(spreadDelta) >= ODDS_MOVEMENT_THRESHOLD,
+        direction: spreadDelta === null ? null : spreadDelta > 0 ? "up" : spreadDelta < 0 ? "down" : "flat",
+      },
+      total: {
+        open: row.open_total, latest: row.latest_total,
+        moved: totalDelta !== null && Math.abs(totalDelta) >= ODDS_MOVEMENT_THRESHOLD,
+        direction: totalDelta === null ? null : totalDelta > 0 ? "up" : totalDelta < 0 ? "down" : "flat",
+      },
+    };
+  }
+  return movement;
+}
+
 async function getWeekLeans(DB, season, week) {
   const { results: games } = await DB.prepare(
     `
@@ -1417,20 +1503,27 @@ async function getWeekLeans(DB, season, week) {
     .bind(season, week)
     .all();
 
-  const leans = await Promise.all(
-    games.map(async (game) => {
-      const [signals, homeRecent, awayRecent] = await Promise.all([
-        getGameSituationalSignals(DB, game),
-        getTeamRollingAggregate(DB, game.home_team, game.gameday, RECENT_GAMES_WINDOW),
-        getTeamRollingAggregate(DB, game.away_team, game.gameday, RECENT_GAMES_WINDOW),
-      ]);
-      return {
-        game_id: game.game_id,
-        situational: tallySituational(signals, homeRecent, awayRecent),
-        stats: tallyStats(homeRecent, awayRecent),
-      };
-    })
-  );
+  const [leans, oddsMovement] = await Promise.all([
+    Promise.all(
+      games.map(async (game) => {
+        const [signals, homeRecent, awayRecent] = await Promise.all([
+          getGameSituationalSignals(DB, game),
+          getTeamRollingAggregate(DB, game.home_team, game.gameday, RECENT_GAMES_WINDOW),
+          getTeamRollingAggregate(DB, game.away_team, game.gameday, RECENT_GAMES_WINDOW),
+        ]);
+        return {
+          game_id: game.game_id,
+          situational: tallySituational(signals, homeRecent, awayRecent),
+          stats: tallyStats(homeRecent, awayRecent),
+        };
+      })
+    ),
+    getOddsMovement(DB, games.map((g) => g.game_id)),
+  ]);
+
+  for (const lean of leans) {
+    lean.odds_movement = oddsMovement[lean.game_id] || null;
+  }
 
   return { season, week, updated: new Date().toISOString(), leans };
 }
@@ -1460,7 +1553,7 @@ async function getGameDetail(DB, gameId) {
     .first();
   if (!game) return null;
 
-  const [model, homeRecent, awayRecent, homeFull, awayFull, h2h, teamNames, signals] = await Promise.all([
+  const [model, homeRecent, awayRecent, homeFull, awayFull, h2h, teamNames, signals, oddsHistory] = await Promise.all([
     DB.prepare(
       `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total, updated, note
        FROM model WHERE game_id = ?`
@@ -1487,6 +1580,25 @@ async function getGameDetail(DB, gameId) {
       .bind(game.home_team, game.away_team)
       .all(),
     getGameSituationalSignals(DB, game),
+    // Full per-bookmaker snapshot history for this game -- "details" view,
+    // no movement-threshold gating here (unlike the games.html summary
+    // arrows) since arriving at this page is already an intentional look
+    // at this specific game. Sign convention note: spread_line here is the
+    // HOME team's own bookmaker line (negative = home favored) -- the
+    // OPPOSITE convention from game.spread_line above (positive = home
+    // favored). See the comment on getOddsMovement().
+    DB.prepare(
+      `
+      SELECT bookmaker, snapshot_time, home_moneyline, away_moneyline,
+             spread_line, home_spread_odds, away_spread_odds,
+             total_line, over_odds, under_odds
+      FROM odds_snapshot
+      WHERE game_id = ?
+      ORDER BY snapshot_time ASC, bookmaker ASC
+      `
+    )
+      .bind(gameId)
+      .all(),
   ]);
 
   const team_names = {};
@@ -1500,6 +1612,7 @@ async function getGameDetail(DB, gameId) {
     away: { team: game.away_team, recent: awayRecent, full_season: awayFull },
     team_names,
     head_to_head: h2h.results,
+    odds_history: oddsHistory.results,
     updated: new Date().toISOString(),
   };
 }

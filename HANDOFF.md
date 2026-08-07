@@ -2305,3 +2305,69 @@ Fixed by splitting fitting from scoring, permanently:
   in the real CI environment (only verified locally in this session so
   far). Also still open: retiring the old Cowork `edge-rush-weekly-refresh`
   task (see above -- unrelated to this change, just still pending).
+
+## Odds-movement UI: games.html arrows + game.html detail table
+
+Jeff asked whether the pages had caught up to the new `odds_snapshot` data
+(they hadn't -- Worker had the table, nothing read it yet). Scope, from his
+answers: 9 bookmakers currently tracked; averages with directional arrows
+on the games.html summary, gated to only show when the average has moved
+&gt;= 1pt; full per-bookmaker detail as a table on game.html, no threshold
+gating there since visiting that page is already an intentional look at
+that one game.
+
+- **Worker (`worker/src/index.js`)**: added `ODDS_MOVEMENT_THRESHOLD = 1.0`
+  and `getOddsMovement(DB, gameIds)` -- one batched CTE query computing the
+  average spread/total at the earliest vs. latest snapshot per game, only
+  returning a game once it has 2+ distinct snapshot times (games with a
+  single snapshot so far are silently omitted -- no movement to report
+  yet, not an error). `getWeekLeans()` now attaches `lean.odds_movement =
+  { spread: {open, latest, moved, direction}, total: {...} }` per game.
+  `getGameDetail()` now returns `odds_history` -- the full, ungated
+  per-bookmaker snapshot history for that game, `ORDER BY snapshot_time
+  ASC, bookmaker ASC`.
+- **Sign-convention bug this had to dodge**: `odds_snapshot.spread_line` is
+  the HOME team's own bookmaker line (negative = home favored) --
+  the OPPOSITE convention from `game.spread_line` (positive = home
+  favored), which is what `Util.favoredTeamLine()` and every existing
+  spread display on the site assumes. Handled in two different ways
+  depending on what's being shown:
+  - **games.html arrows** (`oddsArrow()` in `page-games.js`): the Worker's
+    raw `direction` ("up"/"down") is computed from the raw odds-convention
+    delta, so it's backwards relative to what's on screen. Flipped for
+    `spread` only (totals have no such conflict) so "up" always means "the
+    number in this cell went up," not "the raw odds_snapshot number went
+    up."
+  - **game.html detail table** (`renderOdds()` in `page-game.js`): negates
+    `row.spread_line` before handing it to `Util.favoredTeamLine()`, so
+    each row reads as a normal "TEAM -3.5" bookmaker line instead of
+    silently naming the wrong favorite.
+- **CSS**: new `.odds-arrow` / `.odds-arrow--up` / `.odds-arrow--down` in
+  `style.css` -- a small trailing glyph (▲/▼), not reusing the existing
+  `.value-lead` class, since that one is a one-directional "which side is
+  ahead" pattern (up-arrow only, accent-colored) used elsewhere on the
+  page for a different kind of comparison. The new class is neutral/dim on
+  purpose -- numeric direction, not a value judgment.
+- **games.html** (`page-games.js`): Line/Total cells now append the arrow
+  span next to the existing value when `lean.odds_movement.spread` /
+  `.total` has `moved: true`.
+- **game.html**: new "Odds movement" `<h2>` section (placed after
+  Situational signals, before Team comparison) with a plain table --
+  Snapshot time, Book, Spread, Total, Away ML, Home ML -- one row per
+  bookmaker/snapshot-time pair, oldest first.
+- **Verified with a `jsdom` harness** (same approach as every other UI
+  check in this file): mocked `Data.getWeekLeans`/`Data.getGameDetail`
+  with synthetic movement in both directions and confirmed the arrow flip
+  lands correctly (raw "down" &rarr; displayed "up" and vice versa, totals
+  unflipped, no-`moved` cells get no arrow). Also re-verified the sign
+  conversion against **real D1 data** (`2026_01_ARI_LAC`: home team LAC
+  heavily favored per moneyline, raw `spread_line` -9.5 to -11.5 across
+  bookmakers, correctly renders as "LAC -9.5"/"LAC -11.5", not flipped to
+  ARI). No runtime errors either test.
+- **Currently 9 bookmakers tracked, 1 snapshot per game in production** (the
+  first `fetch_odds_snapshot.py` run for 2026 Week 1) -- arrows won't
+  actually show on the live site until a second snapshot lands for a given
+  game and the average moves &gt;= 1pt. Expected, not a bug.
+- **Needs both a Worker redeploy** (`wrangler deploy` from `worker/`) **and
+  a site push** before this goes live -- same two-step deploy every other
+  Worker+site change in this file has needed.

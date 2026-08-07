@@ -5,6 +5,7 @@
   const modelWrap = document.getElementById("model-wrap");
   const signalsWrap = document.getElementById("signals-wrap");
   const compareWrap = document.getElementById("compare-table-wrap");
+  const oddsWrap = document.getElementById("odds-table-wrap");
   const h2hWrap = document.getElementById("h2h-table-wrap");
 
   const params = new URLSearchParams(location.search);
@@ -471,6 +472,61 @@
     `;
   }
 
+  /** American moneyline, e.g. +150 / -170 -- "-" for null/undefined. */
+  function moneyline(v) {
+    if (v === null || v === undefined) return "-";
+    const n = Number(v);
+    return n > 0 ? `+${n}` : String(n);
+  }
+
+  // Full per-bookmaker snapshot history -- no movement-threshold gating
+  // (unlike games.html's summary arrows), since landing on this page is
+  // already an intentional look at this one game. One row per
+  // bookmaker/snapshot-time pair, oldest first (matches the Worker's
+  // ORDER BY).
+  //
+  // Sign-convention note (see the same note in page-games.js's oddsArrow):
+  // odds_snapshot.spread_line is the HOME team's own bookmaker line,
+  // negative = home favored -- the OPPOSITE convention from game.spread_line
+  // (positive = home favored), which is what Util.favoredTeamLine expects.
+  // Negate before handing it to that helper so this table's "TEAM -3.5"
+  // reads the same way as every other spread on the site, instead of
+  // silently flipping the favorite.
+  function renderOdds(history, g) {
+    if (!history || !history.length) {
+      Util.showEmpty(oddsWrap, "No odds snapshots recorded for this game yet.");
+      return;
+    }
+    const rows = history
+      .map((r) => {
+        const spread = Util.favoredTeamLine(r.spread_line === null || r.spread_line === undefined ? null : -r.spread_line, g.home_team, g.away_team);
+        return `
+          <tr>
+            <td>${Util.formatDateTime(r.snapshot_time)}</td>
+            <td>${Util.escapeHtml(r.bookmaker)}</td>
+            <td class="num">${spread}</td>
+            <td class="num">${Util.num(r.total_line, 1)}</td>
+            <td class="num">${moneyline(r.away_moneyline)}</td>
+            <td class="num">${moneyline(r.home_moneyline)}</td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    oddsWrap.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Snapshot</th><th>Book</th>
+            <th class="num">Spread</th><th class="num">Total</th>
+            <th class="num">${Util.escapeHtml(g.away_team)} ML</th><th class="num">${Util.escapeHtml(g.home_team)} ML</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
   function renderH2H(detail, games) {
     const teamNames = detail.team_names || {};
     if (!games.length) {
@@ -512,6 +568,7 @@
     titleEl.textContent = "No game selected";
     subtitleEl.textContent = "";
     Util.showEmpty(compareWrap, "No game id in the URL.");
+    Util.showEmpty(oddsWrap, "No game id in the URL.");
     Util.showEmpty(h2hWrap, "No game id in the URL.");
     return;
   }
@@ -525,6 +582,7 @@
     renderModel(detail.model, detail.game);
     renderSignals(detail.signals, detail.game, detail);
     renderCompare(detail, compareView);
+    renderOdds(detail.odds_history, detail.game);
     renderH2H(detail, detail.head_to_head);
 
     compareToggle.addEventListener("click", (e) => {
@@ -540,6 +598,7 @@
     Util.showError(summaryWrap, err);
     Util.showError(signalsWrap, err);
     Util.showError(compareWrap, err);
+    Util.showError(oddsWrap, err);
     Util.showError(h2hWrap, err);
   }
 })();

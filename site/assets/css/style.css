@@ -460,6 +460,23 @@ tr.expand-row td {
   top: -1px;
 }
 
+/* games.html Line/Total cells -- small trailing arrow when the average
+   odds_snapshot line has moved >= 1pt since the earliest snapshot (see
+   getOddsMovement() in the Worker). Purely directional (numeric up/down of
+   the average), not a value judgment -- no accent color like .value-lead,
+   just a faint marker so it doesn't compete with the number itself. */
+.odds-arrow {
+  font-size: 0.7em;
+  margin-left: 3px;
+  color: var(--color-text-dim);
+}
+.odds-arrow--up::after {
+  content: "\25B2";
+}
+.odds-arrow--down::after {
+  content: "\25BC";
+}
+
 .compare-row {
   display: flex;
   align-items: baseline;

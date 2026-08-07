@@ -167,6 +167,33 @@
     return `<span class="badge neutral">Ahead: ${Util.escapeHtml(leader)} (${score})</span>`;
   }
 
+  // Small up/down arrow next to the Line/Total cells when the average
+  // odds_snapshot line has moved >= 1pt since its earliest snapshot (see
+  // ODDS_MOVEMENT_THRESHOLD / getOddsMovement() in the Worker). Only
+  // renders once `lean.odds_movement` is present (2+ distinct snapshot
+  // times for the game) and `.moved` is true for that market.
+  //
+  // Sign-convention note: odds_snapshot.spread_line (what odds_movement.spread
+  // is built from) is the HOME team's own bookmaker line, negative = home
+  // favored -- the OPPOSITE convention from game.spread_line, positive =
+  // home favored, which is what the Line cell actually displays via
+  // Util.favoredTeamLine. So the raw "up"/"down" direction from the Worker
+  // is backwards relative to what's on screen -- flip it for spread so the
+  // arrow always matches "the number in this cell went up/down", not the
+  // raw odds_snapshot number. Totals have no such conflict (same
+  // convention everywhere), so pass through as-is.
+  function oddsArrow(oddsMovement, market) {
+    const m = oddsMovement && oddsMovement[market];
+    if (!m || !m.moved) return "";
+    let direction = m.direction;
+    if (market === "spread") {
+      direction = direction === "up" ? "down" : direction === "down" ? "up" : direction;
+    }
+    if (direction !== "up" && direction !== "down") return "";
+    const label = market === "spread" ? "Average line has moved" : "Average total has moved";
+    return `<span class="odds-arrow odds-arrow--${direction}" title="${Util.escapeHtml(label)}"></span>`;
+  }
+
   // --- Pick-log cells (folded in from the old picks.html) --------------
   // A game only has a picks_log row if it was flagged (|edge| >= 2.0 at the
   // time weekly_update.py scored it) -- most games have no pick, hence the
@@ -232,8 +259,8 @@
             <td>${Util.escapeHtml(g.game_type)}</td>
             <td>${Util.formatDate(g.gameday)}</td>
             <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(teamName(g.away_team))} @ ${Util.escapeHtml(teamName(g.home_team))}</a></td>
-            <td class="num">${Util.favoredTeamLine(g.spread_line, g.home_team, g.away_team)}</td>
-            <td class="num">${Util.num(g.total_line, 1)}</td>
+            <td class="num">${Util.favoredTeamLine(g.spread_line, g.home_team, g.away_team)}${oddsArrow(lean && lean.odds_movement, "spread")}</td>
+            <td class="num">${Util.num(g.total_line, 1)}${oddsArrow(lean && lean.odds_movement, "total")}</td>
             <td>${leanBadge(lean && lean.situational, g)}</td>
             <td>${leanBadge(lean && lean.stats, g)}</td>
             ${anyPlayed ? `<td class="num">${score}</td><td>${atsBadge(g)}</td><td>${ouBadge(g)}</td>` : ""}
