@@ -3,12 +3,23 @@
   const weekSelect = document.getElementById("week-select");
   const teamFilter = document.getElementById("team-filter");
   const tableWrap = document.getElementById("games-table-wrap");
+  const leansNote = document.getElementById("leans-note");
 
   const params = new URLSearchParams(location.search);
   let currentGames = [];
   let modelByGameId = new Map();
   let picksByGameId = new Map();
   let teamNames = {};
+
+  // Signal/stat "lean" tallies -- scoped to a single week (see
+  // Data.getWeekLeans / getWeekLeans() in the Worker for why: computing
+  // the full situational-signals payload is too expensive per-game to run
+  // for an entire season at once). `leansState` is "none" (no week
+  // selected -- "All weeks"), "loading", or "ready"; leansByGameId is only
+  // trustworthy when leansState is "ready".
+  let leansByGameId = new Map();
+  let leansForWeekKey = null;
+  let leansState = "none";
 
   function teamName(abbr) {
     return teamNames[abbr] || abbr;
@@ -69,6 +80,45 @@
     }
   }
 
+  // Kicks off (or reuses) the leans fetch for whatever week is currently
+  // selected, re-rendering once it resolves. Doesn't block the caller --
+  // the table renders immediately with "-"/"..." placeholders and updates
+  // in place, since this can be the slowest thing on the page (~15 D1
+  // queries per game).
+  function refreshLeans() {
+    const season = seasonSelect.value;
+    const week = weekSelect.value;
+    leansNote.style.display = week ? "none" : "";
+
+    if (!week) {
+      leansByGameId = new Map();
+      leansForWeekKey = null;
+      leansState = "none";
+      return;
+    }
+
+    const key = `${season}:${week}`;
+    if (leansForWeekKey === key && leansState === "ready") return; // already have it
+
+    leansState = "loading";
+    leansForWeekKey = key;
+    Data.getWeekLeans(season, week)
+      .then((data) => {
+        if (leansForWeekKey !== key) return; // user moved on to a different week meanwhile
+        leansByGameId = new Map(data.leans.map((l) => [l.game_id, l]));
+        leansState = "ready";
+        render();
+      })
+      .catch(() => {
+        if (leansForWeekKey !== key) return;
+        // Non-fatal -- leans are a bonus column, not core schedule data.
+        // Leave cells at "-" rather than breaking the whole table.
+        leansByGameId = new Map();
+        leansState = "ready";
+        render();
+      });
+  }
+
   function edgeBadge(g) {
     const m = modelByGameId.get(g.game_id);
     if (!m) return `<span class="badge neutral">-</span>`;
@@ -95,6 +145,26 @@
     return diff > 0
       ? `<span class="badge warn">Over</span>`
       : `<span class="badge neutral">Under</span>`;
+  }
+
+  // Situational-signal / stat lean tally -- "1 point per" for now (Jeff:
+  // weighting comes later). Gray "Ahead: TEAM (n-m)" badge, same language
+  // and style as Team Comparison's per-category tally on game.html, NOT
+  // the green "Favors" badge -- this combined tally deliberately mixes
+  // tested-and-real signals (Big Home Dog, QB Status) with purely
+  // descriptive ones (Draft Capital, Pass Defense Allowed, etc.) at equal
+  // weight, so it doesn't have the same backing "Favors" implies elsewhere
+  // on this site.
+  function leanBadge(tally, g) {
+    if (leansState === "loading") return `<span class="text-faint">&hellip;</span>`;
+    if (!tally) return `<span class="text-faint">-</span>`;
+    const { home_points, away_points } = tally;
+    if (home_points === away_points) {
+      return `<span class="badge neutral">Even (${home_points}-${away_points})</span>`;
+    }
+    const leader = home_points > away_points ? g.home_team : g.away_team;
+    const score = home_points > away_points ? `${home_points}-${away_points}` : `${away_points}-${home_points}`;
+    return `<span class="badge neutral">Ahead: ${Util.escapeHtml(leader)} (${score})</span>`;
   }
 
   // --- Pick-log cells (folded in from the old picks.html) --------------
@@ -142,21 +212,31 @@
       return;
     }
 
+    // Score/ATS/O/U are pure results -- meaningless "-" on every row for a
+    // week that hasn't happened yet. Suppress the whole column (not just
+    // the cells) when nothing in the current view has been played, rather
+    // than cluttering the table with a column of dashes. Model
+    // Edge/Bet/Closing Line/CLV are all known before kickoff, so they stay
+    // regardless; Pick Result stays too -- it already shows "Pending" for
+    // an unresolved logged pick, which is real information, not a blank.
+    const anyPlayed = rows.some((g) => g.home_score !== null && g.home_score !== undefined);
+
     const bodyRows = rows
       .map((g) => {
         const played = g.home_score !== null && g.home_score !== undefined;
         const score = played ? `${g.away_score}&ndash;${g.home_score}` : "-";
+        const lean = leansByGameId.get(g.game_id);
         return `
           <tr>
             <td>${Util.escapeHtml(Util.weekLabelShort(g.week, g.game_type))}</td>
             <td>${Util.escapeHtml(g.game_type)}</td>
             <td>${Util.formatDate(g.gameday)}</td>
             <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(teamName(g.away_team))} @ ${Util.escapeHtml(teamName(g.home_team))}</a></td>
-            <td class="num">${score}</td>
             <td class="num">${Util.favoredTeamLine(g.spread_line, g.home_team, g.away_team)}</td>
             <td class="num">${Util.num(g.total_line, 1)}</td>
-            <td>${atsBadge(g)}</td>
-            <td>${ouBadge(g)}</td>
+            <td>${leanBadge(lean && lean.situational, g)}</td>
+            <td>${leanBadge(lean && lean.stats, g)}</td>
+            ${anyPlayed ? `<td class="num">${score}</td><td>${atsBadge(g)}</td><td>${ouBadge(g)}</td>` : ""}
             <td>${edgeBadge(g)}</td>
             <td>${pickBetCell(g)}</td>
             <td class="num">${pickClosingLineCell(g)}</td>
@@ -174,8 +254,10 @@
         <thead>
           <tr>
             <th>Wk</th><th>Type</th><th>Date</th><th>Matchup</th>
-            <th class="num">Score (Away&ndash;Home)</th><th class="num">Line</th><th class="num">Total</th>
-            <th>ATS</th><th>O/U</th><th class="num">Model Edge</th>
+            <th class="num">Line</th><th class="num">Total</th>
+            <th>Signals</th><th>Stats</th>
+            ${anyPlayed ? `<th class="num">Score (Away&ndash;Home)</th><th>ATS</th><th>O/U</th>` : ""}
+            <th class="num">Model Edge</th>
             <th>Bet</th><th class="num">Closing Line</th><th class="num">CLV</th><th>Pick Result</th>
             <th>Roof</th><th>Forecast</th>
           </tr>
@@ -189,6 +271,7 @@
     try {
       await loadSeasonGames();
       render();
+      refreshLeans();
       syncUrl();
     } catch (err) {
       Util.showError(tableWrap, err);
@@ -196,6 +279,7 @@
   });
   weekSelect.addEventListener("change", () => {
     render();
+    refreshLeans();
     syncUrl();
   });
   teamFilter.addEventListener(
@@ -213,6 +297,7 @@
     // specific season -- if it did, respect the season default logic above.
     await loadSeasonGames({ defaultToCurrentWeek: !params.get("season") });
     render();
+    refreshLeans();
     syncUrl();
   } catch (err) {
     Util.showError(tableWrap, err);

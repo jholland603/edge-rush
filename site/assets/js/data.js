@@ -31,6 +31,12 @@ const Data = {
 
   getGamesSeason: (season) => fetchJSON(`${API_BASE}/games/${season}`),
 
+  // Situational-signal / stat "lean" tallies for games.html's two summary
+  // columns -- scoped to a single week (not a whole season) since each
+  // game costs ~15 D1 queries to compute; see getWeekLeans() in the
+  // Worker.
+  getWeekLeans: (season, week) => fetchJSON(`${API_BASE}/games/${season}/${week}/leans`),
+
   getTeamsSeason: (season) => fetchJSON(`${API_BASE}/teams/${season}`),
 
   getPlayersSeason: (season) => fetchJSON(`${API_BASE}/players/season/${season}`),

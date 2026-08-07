@@ -119,6 +119,9 @@ export default {
       if ((m = path.match(/^\/games\/(\d{4})$/))) {
         return json(await getGamesSeason(DB, Number(m[1])));
       }
+      if ((m = path.match(/^\/games\/(\d{4})\/(\d{1,2})\/leans$/))) {
+        return json(await getWeekLeans(DB, Number(m[1]), Number(m[2])));
+      }
       if ((m = path.match(/^\/teams\/(\d{4})$/))) {
         return json(await getTeamsSeason(DB, Number(m[1])));
       }
@@ -1280,6 +1283,156 @@ async function getGameSituationalSignals(DB, game) {
     turnover_margin_note:
       `Not tested in this project. Widely-cited public research (fumble recovery rates in particular are close to a coin flip) suggests raw turnover margin doesn't reliably predict future performance -- shown as a descriptive fact only, computed from takeaways (defensive INTs + recovered opponent fumbles) minus giveaways (INTs thrown + fumbles lost), over each team's last ${RECENT_GAMES_WINDOW} games.`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// /games/:season/:week/leans -- games.html's "which team does the pile of
+// situational signals/stats lean toward" columns. Deliberately scoped to a
+// single week (not a whole season) -- computing the full situational-
+// signals payload per game is ~15 D1 queries each (see
+// getGameSituationalSignals above), and a full season is 285 games; a week
+// is ~16. "1 point per" per Jeff -- every signal/stat gets equal weight for
+// now regardless of whether it's tested-and-real (Big Home Dog, QB Status)
+// or purely descriptive (Draft Capital, Referee, etc.) -- weighting is a
+// planned future step, not this one. Because tested and untested signals
+// are deliberately mixed with equal weight here, this reports "Ahead: TEAM
+// (n-m)" (the same neutral gray-badge language/style as Team Comparison's
+// per-category tally on game.html), NOT "Favors TEAM" -- that green badge
+// is reserved for the two individually-tested-and-real signals, and this
+// combined tally doesn't have that same backing as a whole.
+// ---------------------------------------------------------------------------
+
+// Same "which side is ahead" rule as pairHighlight() in page-game.js,
+// re-implemented server-side for this tally (kept in sync by hand -- no
+// shared module between Worker and site in this project).
+function directionalPoint(awayVal, homeVal, higherBetter) {
+  if (higherBetter === null || higherBetter === undefined) return null;
+  if (typeof awayVal !== "number" || typeof homeVal !== "number" || awayVal === homeVal) return null;
+  return (higherBetter ? awayVal > homeVal : awayVal < homeVal) ? "away" : "home";
+}
+
+function turnoverMarginFromStats(stats) {
+  if (!stats) return null;
+  const takeaways = (stats.def_interceptions || 0) + (stats.fumble_recovery_opp || 0);
+  const giveaways = (stats.passing_interceptions || 0) + (stats.fumbles_lost_total || 0);
+  return takeaways - giveaways;
+}
+
+// Situational signals that DO have a defensible "which side is ahead"
+// direction, matching exactly what's highlighted (bold/badge) on
+// game.html. Deliberately excludes: Timezone Crossing, Coaching Tenure,
+// Matchup Type, Referee, Game Slot (no defensible direction on game.html
+// either) and Common Opponents (a list of per-opponent rows, not a single
+// scalar comparison -- folding it into a single point isn't well-defined
+// yet; revisit if/when this gets real weighting).
+function tallySituational(signals, homeRecentStats, awayRecentStats) {
+  let home = 0;
+  let away = 0;
+  const add = (side) => {
+    if (side === "home") home++;
+    else if (side === "away") away++;
+  };
+
+  if (signals.big_home_dog.applies) add("home");
+
+  const { home: hq, away: aq } = signals.qb_status;
+  if (hq.changed && !aq.changed) add("away");
+  else if (aq.changed && !hq.changed) add("home");
+
+  add(directionalPoint(signals.fatigue.away.rest_days, signals.fatigue.home.rest_days, true));
+  // road_streak_entering, NOT including_this_game -- the latter is always
+  // "at least 1" for whichever team is away regardless of history, which
+  // would silently award a point to home every single game. Entering-
+  // streak is the actual leak-free history: 0 for both sides is a true
+  // push, not a home point.
+  add(directionalPoint(
+    signals.fatigue.away.road_streak_entering,
+    signals.fatigue.home.road_streak_entering,
+    false
+  ));
+  add(directionalPoint(
+    signals.fatigue.away.coming_off_overtime === null ? null : signals.fatigue.away.coming_off_overtime ? 1 : 0,
+    signals.fatigue.home.coming_off_overtime === null ? null : signals.fatigue.home.coming_off_overtime ? 1 : 0,
+    false
+  ));
+  add(directionalPoint(signals.draft_capital.away, signals.draft_capital.home, true));
+  add(directionalPoint(signals.pass_defense_allowed.away, signals.pass_defense_allowed.home, false));
+  add(directionalPoint(
+    turnoverMarginFromStats(awayRecentStats),
+    turnoverMarginFromStats(homeRecentStats),
+    true
+  ));
+
+  return { home_points: home, away_points: away };
+}
+
+// Mirrors STAT_GROUPS in page-game.js -- same rows, same higherBetter
+// directions, flattened into one list since the games-list tally doesn't
+// need the group/category breakdown, just a total. Kept in sync by hand
+// with page-game.js if those rows ever change.
+const LEAN_STAT_ROWS = [
+  { get: (t) => t.passing_yards, higherBetter: true },
+  { get: (t) => t.passing_tds, higherBetter: true },
+  { get: (t) => (t.attempts ? t.passing_epa / t.attempts : null), higherBetter: true },
+  { get: (t) => t.passing_interceptions, higherBetter: false },
+  { get: (t) => t.rushing_yards, higherBetter: true },
+  { get: (t) => t.rushing_tds, higherBetter: true },
+  { get: (t) => (t.carries ? t.rushing_epa / t.carries : null), higherBetter: true },
+  { get: (t) => t.def_sacks, higherBetter: true },
+  { get: (t) => t.def_interceptions, higherBetter: true },
+  { get: (t) => t.def_tackles_for_loss, higherBetter: true },
+  { get: (t) => t.def_fumbles_forced, higherBetter: true },
+  {
+    get: (t) => (t.sack_fumbles_lost || 0) + (t.rushing_fumbles_lost || 0) + (t.receiving_fumbles_lost || 0),
+    higherBetter: false,
+  },
+  // FG Made/Att skipped -- shown as a fraction on game.html, higherBetter
+  // null there too (not a single comparable number).
+  { get: (t) => (t.pt_att ? t.pt_net_yards / t.pt_att : null), higherBetter: true },
+  { get: (t) => t.penalties, higherBetter: false },
+  { get: (t) => t.penalty_yards, higherBetter: false },
+];
+
+function tallyStats(homeStats, awayStats) {
+  let home = 0;
+  let away = 0;
+  for (const row of LEAN_STAT_ROWS) {
+    const side = directionalPoint(row.get(awayStats || {}), row.get(homeStats || {}), row.higherBetter);
+    if (side === "home") home++;
+    else if (side === "away") away++;
+  }
+  return { home_points: home, away_points: away };
+}
+
+async function getWeekLeans(DB, season, week) {
+  const { results: games } = await DB.prepare(
+    `
+    SELECT g.game_id, g.season, g.week, g.gameday, g.weekday, g.gametime, g.home_team, g.away_team,
+           g.home_rest, g.away_rest, g.div_game, g.home_qb_id, g.away_qb_id, g.referee_id, g.spread_line
+    FROM game g
+    WHERE g.season = ? AND g.week = ?
+    ORDER BY g.game_id
+    `
+  )
+    .bind(season, week)
+    .all();
+
+  const leans = await Promise.all(
+    games.map(async (game) => {
+      const [signals, homeRecent, awayRecent] = await Promise.all([
+        getGameSituationalSignals(DB, game),
+        getTeamRollingAggregate(DB, game.home_team, game.gameday, RECENT_GAMES_WINDOW),
+        getTeamRollingAggregate(DB, game.away_team, game.gameday, RECENT_GAMES_WINDOW),
+      ]);
+      return {
+        game_id: game.game_id,
+        situational: tallySituational(signals, homeRecent, awayRecent),
+        stats: tallyStats(homeRecent, awayRecent),
+      };
+    })
+  );
+
+  return { season, week, updated: new Date().toISOString(), leans };
 }
 
 // ---------------------------------------------------------------------------

@@ -224,9 +224,14 @@
         "Road Trip",
         "none",
         pairRows(
-          g.away_team, fatigue.away.road_streak_including_this_game,
-          g.home_team, fatigue.home.road_streak_including_this_game, false,
-          (v) => `${v} straight`
+          // road_streak_entering (not including_this_game) -- this game
+          // itself would always show as "at least 1" for whichever team is
+          // away regardless of history, which reads exactly like a leaked
+          // streak even when it isn't one. Entering-streak is unambiguous:
+          // 0 always means "no streak coming in," full stop.
+          g.away_team, fatigue.away.road_streak_entering,
+          g.home_team, fatigue.home.road_streak_entering, false,
+          (v) => (v === null || v === undefined ? "-" : v === 0 ? "No streak coming in" : `${v} straight coming in`)
         ),
         fatigue.note
       )

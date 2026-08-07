@@ -2022,3 +2022,72 @@ reset just because the calendar flipped.)
   score, model banner reads "P(SEA covers)". No runtime errors.
 - Needs a Worker redeploy (`getTeamRecentGames` query change) + `site/`
   push (client wording/reorder) together, same as every change above.
+- **Follow-up bug caught after that deploy**: Jeff deployed, confirmed
+  Coming Off OT fixed, but reported Road Trip still looked wrong (BUF "1
+  straight" / HOU "0 straight" in Week 1). Checked D1 directly and then
+  fetched the *live* Worker API for that exact game -- `road_streak_entering`
+  was correctly `0` for both teams, proving the season-scoping fix above
+  really is live. The confusing "1" was a different field, `fatigue.away
+  .road_streak_including_this_game`, which the Road Trip card was
+  displaying instead: it's `roadStreakEntering + 1` for any away team,
+  i.e. it reads as "at least 1" even with a perfectly clean reset, because
+  it counts the game currently being viewed. Not a re-leak -- a
+  wording/display bug that made a correct reset look identical to a real
+  leftover streak. Fixed the card to read `road_streak_entering` instead
+  ("No streak coming in" / "N straight coming in"). Also found and fixed
+  the identical mistake in the new games.html tally code below, before it
+  ever shipped.
+
+## games.html: Signals/Stats lean columns, suppress result columns before kickoff
+
+Jeff: "I'd like to see which team the combination of all situational
+signals favors and which team the combination of stats favors... just 1
+point per works... I don't think we need any of the result columns for
+games that haven't been played."
+
+- **New Worker endpoint** `GET /games/:season/:week/leans` (`getWeekLeans`
+  in `worker/src/index.js`) -- deliberately week-scoped, not season-scoped
+  like `/games/:season`. Each game costs ~15 D1 queries to fully evaluate
+  (situational signals + both teams' rolling-10 stat aggregates); doing
+  that for a whole season (up to 285 games) in one request would be
+  ~6,500+ queries. games.html only fetches leans when a specific week is
+  selected; "All weeks" shows a note explaining why instead of eating that
+  cost.
+- **Situational tally** (`tallySituational`): 1 point per side for each of
+  8 comparable signals -- Big Home Dog, QB Status (change vs. no change),
+  rest days, road streak *entering* (not including-this-game, see bug note
+  above), coming off OT, draft capital, pass defense allowed (rolling-10),
+  turnover margin (rolling-10). Common Opponents, Coaching Tenure,
+  Referee, Matchup Type, Game Slot, and Timezone Crossing are excluded --
+  none of them reduce to a defensible single "this side is ahead" scalar.
+- **Stats tally** (`tallyStats`): 1 point per side across 15 rolling-10
+  team-stat comparisons (passing/rushing volume+efficiency+turnovers,
+  defensive sacks/INTs/TFLs/forced fumbles, punting, penalties).
+- **Badge language is deliberately "Ahead: TEAM (n-m)" / "Even (n-n)"**,
+  the same gray neutral badge and wording as the existing per-category
+  tally on game.html's Team Comparison section (`categoryLeaderBadge`) --
+  explicitly NOT the green "Favors" badge, which stays reserved for Big
+  Home Dog/QB Status (the only two signals with real backtested backing).
+  This tally mixes those with untested descriptive signals at equal
+  weight, so it shouldn't visually claim the same thing "Favors" claims.
+  Confirmed this distinction with Jeff before building.
+- **Result-column suppression**: `games.html`/`page-games.js` now computes
+  whether *any* row in the current filtered view has been played; if not,
+  the Score/ATS/O/U header and body cells are omitted entirely rather than
+  rendered as a column of dashes. Model Edge, Bet, Closing Line, and CLV
+  stay always-on (known pre-kickoff); Pick Result also stays always-on --
+  confirmed with Jeff that it already shows a meaningful "Pending" for an
+  unresolved logged pick, unlike Score/ATS/O/U's context-free "-".
+  Table column order: Wk/Type/Date/Matchup/Line/Total/Signals/Stats/
+  [Score/ATS/O-U when anyPlayed]/Model Edge/Bet/Closing Line/CLV/Pick
+  Result/Roof/Forecast.
+- Verified with a jsdom harness mocking `Data.getGamesSeason` /
+  `Data.getWeekLeans`: unplayed week correctly suppresses Score/ATS/O-U
+  and renders both lean badges; played week shows all columns and correct
+  badges; "All weeks" (no week param) makes zero calls to `getWeekLeans`
+  and shows the cost-explanation note. Worker-side tally logic separately
+  unit-tested standalone (5 cases, including a regression test for the
+  Week 1 road-streak-reset bug above) since it has no live D1 binding in
+  this sandbox.
+- Needs a Worker redeploy (new `/games/:season/:week/leans` route) + the
+  usual `site/` push (games.html, data.js, page-games.js) together.
