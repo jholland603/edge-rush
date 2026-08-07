@@ -29,10 +29,24 @@
     return diff > 0 ? "Over" : "Under";
   }
 
-  function renderSummary(g, teamNames) {
+  function renderSummary(g, teamNames, oddsAverage) {
     const played = g.home_score !== null && g.home_score !== undefined;
     const ats = atsResult(g);
     const ou = ouResult(g);
+
+    // For a game that's already been played, g.spread_line/total_line is
+    // the real closing line (nflverse records it after the fact) -- keep
+    // showing that, unchanged. For an upcoming game, that same field is
+    // just whatever line nflverse's schedule CSV had at the last weekly
+    // import (not live), so once odds_snapshot has at least one real
+    // bookmaker reading, prefer the live across-book average instead and
+    // label it accordingly. Falls back to the old label/value if no
+    // snapshot has landed yet for this game.
+    const useAverage = !played && oddsAverage;
+    const spreadValue = useAverage && oddsAverage.spread !== null ? oddsAverage.spread : g.spread_line;
+    const totalValue = useAverage && oddsAverage.total !== null ? oddsAverage.total : g.total_line;
+    const spreadLabel = useAverage && oddsAverage.spread !== null ? "Average spread" : "Closing spread";
+    const totalLabel = useAverage && oddsAverage.total !== null ? "Average total" : "Total line";
 
     titleEl.textContent = `${teamNames[g.away_team] || g.away_team} @ ${teamNames[g.home_team] || g.home_team}`;
     subtitleEl.textContent = `${g.season} · ${Util.weekLabel(g.week, g.game_type)} · ${Util.formatDate(g.gameday)}`;
@@ -53,12 +67,12 @@
     summaryWrap.innerHTML = `
       <div class="card-grid">
         <div class="stat-card card">
-          <div class="value">${Util.favoredTeamLine(g.spread_line, g.home_team, g.away_team)}</div>
-          <div class="label">Closing spread${ats ? ` &mdash; ${Util.escapeHtml(ats)}` : ""}</div>
+          <div class="value">${Util.favoredTeamLine(spreadValue, g.home_team, g.away_team)}</div>
+          <div class="label">${spreadLabel}${ats ? ` &mdash; ${Util.escapeHtml(ats)}` : ""}</div>
         </div>
         <div class="stat-card card">
-          <div class="value">${Util.num(g.total_line, 1)}</div>
-          <div class="label">Total line${ou ? ` &mdash; ${Util.escapeHtml(ou)}` : ""}</div>
+          <div class="value">${Util.num(totalValue, 1)}</div>
+          <div class="label">${totalLabel}${ou ? ` &mdash; ${Util.escapeHtml(ou)}` : ""}</div>
         </div>
         <div class="stat-card card">
           <div class="value" style="font-size:1.1rem;">${weather.length ? weather.join(", ") : "-"}</div>
@@ -578,7 +592,7 @@
 
   try {
     const detail = await Data.getGameDetail(gameId);
-    renderSummary(detail.game, detail.team_names || {});
+    renderSummary(detail.game, detail.team_names || {}, detail.odds_average || null);
     renderModel(detail.model, detail.game);
     renderSignals(detail.signals, detail.game, detail);
     renderCompare(detail, compareView);

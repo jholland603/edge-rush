@@ -194,6 +194,30 @@
     return `<span class="odds-arrow odds-arrow--${direction}" title="${Util.escapeHtml(label)}"></span>`;
   }
 
+  // Same reasoning as game.html's summary cards (see page-game.js): for a
+  // played game, g.spread_line/total_line is the real closing line, keep
+  // it. For an upcoming game, prefer the live across-bookmaker average
+  // (lean.odds_average) once at least one snapshot has landed, since the
+  // stored game.spread_line is just a once-a-week import, not live --
+  // falls back to it if no snapshot exists yet for this game.
+  function spreadCell(g, lean) {
+    const played = g.home_score !== null && g.home_score !== undefined;
+    const avg = lean && lean.odds_average;
+    const useAverage = !played && avg && avg.spread !== null;
+    const value = useAverage ? avg.spread : g.spread_line;
+    const title = useAverage ? ` title="Average across ${avg.book_count} book(s)"` : "";
+    return `<span${title}>${Util.favoredTeamLine(value, g.home_team, g.away_team)}</span>${oddsArrow(lean && lean.odds_movement, "spread")}`;
+  }
+
+  function totalCell(g, lean) {
+    const played = g.home_score !== null && g.home_score !== undefined;
+    const avg = lean && lean.odds_average;
+    const useAverage = !played && avg && avg.total !== null;
+    const value = useAverage ? avg.total : g.total_line;
+    const title = useAverage ? ` title="Average across ${avg.book_count} book(s)"` : "";
+    return `<span${title}>${Util.num(value, 1)}</span>${oddsArrow(lean && lean.odds_movement, "total")}`;
+  }
+
   // --- Pick-log cells (folded in from the old picks.html) --------------
   // A game only has a picks_log row if it was flagged (|edge| >= 2.0 at the
   // time weekly_update.py scored it) -- most games have no pick, hence the
@@ -259,8 +283,8 @@
             <td>${Util.escapeHtml(g.game_type)}</td>
             <td>${Util.formatDate(g.gameday)}</td>
             <td><a href="game.html?id=${encodeURIComponent(g.game_id)}">${Util.escapeHtml(teamName(g.away_team))} @ ${Util.escapeHtml(teamName(g.home_team))}</a></td>
-            <td class="num">${Util.favoredTeamLine(g.spread_line, g.home_team, g.away_team)}${oddsArrow(lean && lean.odds_movement, "spread")}</td>
-            <td class="num">${Util.num(g.total_line, 1)}${oddsArrow(lean && lean.odds_movement, "total")}</td>
+            <td class="num">${spreadCell(g, lean)}</td>
+            <td class="num">${totalCell(g, lean)}</td>
             <td>${leanBadge(lean && lean.situational, g)}</td>
             <td>${leanBadge(lean && lean.stats, g)}</td>
             ${anyPlayed ? `<td class="num">${score}</td><td>${atsBadge(g)}</td><td>${ouBadge(g)}</td>` : ""}

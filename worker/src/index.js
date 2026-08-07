@@ -1490,6 +1490,49 @@ async function getOddsMovement(DB, gameIds) {
   return movement;
 }
 
+// Current across-bookmaker average spread/total for each game, as of its
+// LATEST snapshot -- unlike getOddsMovement() above, this needs only one
+// snapshot to return something (no HAVING two-distinct-timestamps filter),
+// since "what's the average right now" doesn't require movement to exist
+// yet. Converts spread to game.spread_line's home-favored-positive
+// convention (negating the raw odds_snapshot value -- see the sign-
+// convention note above) so callers can hand it straight to
+// Util.favoredTeamLine like any other spread number. Total needs no
+// conversion (same convention everywhere).
+async function getLatestOddsAverage(DB, gameIds) {
+  if (!gameIds.length) return {};
+  const placeholders = gameIds.map(() => "?").join(",");
+  const { results } = await DB.prepare(
+    `
+    WITH latest_time AS (
+      SELECT game_id, MAX(snapshot_time) AS snapshot_time
+      FROM odds_snapshot
+      WHERE game_id IN (${placeholders})
+      GROUP BY game_id
+    )
+    SELECT o.game_id, lt.snapshot_time,
+           AVG(o.spread_line) AS avg_spread_raw, AVG(o.total_line) AS avg_total,
+           COUNT(DISTINCT o.bookmaker) AS book_count
+    FROM odds_snapshot o
+    JOIN latest_time lt ON lt.game_id = o.game_id AND lt.snapshot_time = o.snapshot_time
+    GROUP BY o.game_id
+    `
+  )
+    .bind(...gameIds)
+    .all();
+
+  const average = {};
+  for (const row of results) {
+    average[row.game_id] = {
+      spread: row.avg_spread_raw === null ? null : -row.avg_spread_raw,
+      total: row.avg_total,
+      book_count: row.book_count,
+      snapshot_time: row.snapshot_time,
+    };
+  }
+  return average;
+}
+
 async function getWeekLeans(DB, season, week) {
   const { results: games } = await DB.prepare(
     `
@@ -1503,7 +1546,7 @@ async function getWeekLeans(DB, season, week) {
     .bind(season, week)
     .all();
 
-  const [leans, oddsMovement] = await Promise.all([
+  const [leans, oddsMovement, oddsAverage] = await Promise.all([
     Promise.all(
       games.map(async (game) => {
         const [signals, homeRecent, awayRecent] = await Promise.all([
@@ -1519,10 +1562,12 @@ async function getWeekLeans(DB, season, week) {
       })
     ),
     getOddsMovement(DB, games.map((g) => g.game_id)),
+    getLatestOddsAverage(DB, games.map((g) => g.game_id)),
   ]);
 
   for (const lean of leans) {
     lean.odds_movement = oddsMovement[lean.game_id] || null;
+    lean.odds_average = oddsAverage[lean.game_id] || null;
   }
 
   return { season, week, updated: new Date().toISOString(), leans };
@@ -1553,7 +1598,7 @@ async function getGameDetail(DB, gameId) {
     .first();
   if (!game) return null;
 
-  const [model, homeRecent, awayRecent, homeFull, awayFull, h2h, teamNames, signals, oddsHistory] = await Promise.all([
+  const [model, homeRecent, awayRecent, homeFull, awayFull, h2h, teamNames, signals, oddsHistory, oddsAverageMap] = await Promise.all([
     DB.prepare(
       `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total, updated, note
        FROM model WHERE game_id = ?`
@@ -1599,6 +1644,7 @@ async function getGameDetail(DB, gameId) {
     )
       .bind(gameId)
       .all(),
+    getLatestOddsAverage(DB, [gameId]),
   ]);
 
   const team_names = {};
@@ -1613,6 +1659,7 @@ async function getGameDetail(DB, gameId) {
     team_names,
     head_to_head: h2h.results,
     odds_history: oddsHistory.results,
+    odds_average: oddsAverageMap[gameId] || null,
     updated: new Date().toISOString(),
   };
 }
