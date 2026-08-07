@@ -52,10 +52,6 @@
     summaryWrap.innerHTML = `
       <div class="card-grid">
         <div class="stat-card card">
-          <div class="value">${played ? `${g.away_score}&ndash;${g.home_score}` : "-"}</div>
-          <div class="label">Final score (away&ndash;home)</div>
-        </div>
-        <div class="stat-card card">
           <div class="value">${Util.favoredTeamLine(g.spread_line, g.home_team, g.away_team)}</div>
           <div class="label">Closing spread${ats ? ` &mdash; ${Util.escapeHtml(ats)}` : ""}</div>
         </div>
@@ -66,6 +62,10 @@
         <div class="stat-card card">
           <div class="value" style="font-size:1.1rem;">${weather.length ? weather.join(", ") : "-"}</div>
           <div class="label">Conditions</div>
+        </div>
+        <div class="stat-card card">
+          <div class="value">${played ? `${g.away_score}&ndash;${g.home_score}` : "-"}</div>
+          <div class="label">Final score (${Util.escapeHtml(g.away_team)}&ndash;${Util.escapeHtml(g.home_team)})</div>
         </div>
       </div>
     `;
@@ -81,7 +81,7 @@
         <strong>Model prediction:</strong> favors ${Util.favoredTeamLine(model.model_spread, g.home_team, g.away_team)}
         vs. a market of ${Util.favoredTeamLine(model.market_spread, g.home_team, g.away_team)}
         &mdash; edge favors ${Util.favoredTeamLine(model.edge, g.home_team, g.away_team)}
-        ${model.p_home_covers !== null && model.p_home_covers !== undefined ? `, P(home covers) ${Util.pct(model.p_home_covers, 1)}` : ""}.
+        ${model.p_home_covers !== null && model.p_home_covers !== undefined ? `, P(${Util.escapeHtml(g.home_team)} covers) ${Util.pct(model.p_home_covers, 1)}` : ""}.
         ${model.flagged ? "This game was flagged (|edge| &ge; 2.0 pts)." : "Not flagged."}
         <a href="games.html?season=${g.season}&week=${g.week}">See this week's picks &amp; log &rarr;</a>
       </div>
@@ -246,13 +246,18 @@
       )
     );
 
+    // The away team is always the one traveling (home team never leaves
+    // its own timezone), so name them directly instead of making the
+    // reader work out which side a bare zone count refers to.
     cards.push(
       signalCard(
         "Timezone Crossing",
         "none",
         fatigue.timezone_crossing === null || fatigue.timezone_crossing === undefined
           ? "-"
-          : `${fatigue.timezone_crossing} zone${fatigue.timezone_crossing === 1 ? "" : "s"}`,
+          : fatigue.timezone_crossing === 0
+          ? `${Util.escapeHtml(g.away_team)}: no time zone change`
+          : `${Util.escapeHtml(g.away_team)} crossing ${fatigue.timezone_crossing} time zone${fatigue.timezone_crossing === 1 ? "" : "s"}`,
         fatigue.note
       )
     );
@@ -490,7 +495,7 @@
         <thead>
           <tr>
             <th>Week</th><th>Date</th><th>Matchup</th>
-            <th class="num">Score (Away&ndash;Home)</th><th class="num">Line</th><th>ATS</th>
+            <th class="num">Score (Away @ Home)</th><th class="num">Line</th><th>ATS</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>

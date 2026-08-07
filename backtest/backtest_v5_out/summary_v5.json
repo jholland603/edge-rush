@@ -1,0 +1,229 @@
+{
+  "correlation_reports": [
+    {
+      "label": "ewma_full_history (baseline)",
+      "total_games": 6088,
+      "combined_edge": {
+        "n": 6074,
+        "pearson_r_vs_ats_margin": 0.0276,
+        "home_cover_rate_when_home_rated_better": 0.497,
+        "away_cover_rate_when_away_rated_better": 0.5167,
+        "n_home_rated_better": 3024,
+        "n_away_rated_better": 3050
+      },
+      "pass_edge": {
+        "n": 6074,
+        "pearson_r_vs_ats_margin": 0.0262,
+        "home_cover_rate_when_home_rated_better": 0.4979,
+        "away_cover_rate_when_away_rated_better": 0.5176,
+        "n_home_rated_better": 3039,
+        "n_away_rated_better": 3035
+      },
+      "rush_edge": {
+        "n": 6074,
+        "pearson_r_vs_ats_margin": 0.0153,
+        "home_cover_rate_when_home_rated_better": 0.4943,
+        "away_cover_rate_when_away_rated_better": 0.5141,
+        "n_home_rated_better": 3055,
+        "n_away_rated_better": 3019
+      }
+    },
+    {
+      "label": "rolling_last_5",
+      "total_games": 5900,
+      "combined_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0298,
+        "home_cover_rate_when_home_rated_better": 0.4976,
+        "away_cover_rate_when_away_rated_better": 0.5174,
+        "n_home_rated_better": 2972,
+        "n_away_rated_better": 2928
+      },
+      "pass_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0291,
+        "home_cover_rate_when_home_rated_better": 0.4973,
+        "away_cover_rate_when_away_rated_better": 0.517,
+        "n_home_rated_better": 2958,
+        "n_away_rated_better": 2942
+      },
+      "rush_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0146,
+        "home_cover_rate_when_home_rated_better": 0.4973,
+        "away_cover_rate_when_away_rated_better": 0.517,
+        "n_home_rated_better": 2962,
+        "n_away_rated_better": 2938
+      }
+    },
+    {
+      "label": "rolling_last_8",
+      "total_games": 5900,
+      "combined_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0295,
+        "home_cover_rate_when_home_rated_better": 0.4997,
+        "away_cover_rate_when_away_rated_better": 0.5195,
+        "n_home_rated_better": 2980,
+        "n_away_rated_better": 2920
+      },
+      "pass_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0279,
+        "home_cover_rate_when_home_rated_better": 0.4992,
+        "away_cover_rate_when_away_rated_better": 0.519,
+        "n_home_rated_better": 2973,
+        "n_away_rated_better": 2927
+      },
+      "rush_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0176,
+        "home_cover_rate_when_home_rated_better": 0.4965,
+        "away_cover_rate_when_away_rated_better": 0.5162,
+        "n_home_rated_better": 2969,
+        "n_away_rated_better": 2931
+      }
+    },
+    {
+      "label": "rolling_last_10",
+      "total_games": 5900,
+      "combined_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0294,
+        "home_cover_rate_when_home_rated_better": 0.4975,
+        "away_cover_rate_when_away_rated_better": 0.5174,
+        "n_home_rated_better": 2995,
+        "n_away_rated_better": 2905
+      },
+      "pass_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0258,
+        "home_cover_rate_when_home_rated_better": 0.4923,
+        "away_cover_rate_when_away_rated_better": 0.512,
+        "n_home_rated_better": 2976,
+        "n_away_rated_better": 2924
+      },
+      "rush_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0212,
+        "home_cover_rate_when_home_rated_better": 0.4955,
+        "away_cover_rate_when_away_rated_better": 0.5153,
+        "n_home_rated_better": 2991,
+        "n_away_rated_better": 2909
+      }
+    },
+    {
+      "label": "rolling_last_15",
+      "total_games": 5900,
+      "combined_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.022,
+        "home_cover_rate_when_home_rated_better": 0.4975,
+        "away_cover_rate_when_away_rated_better": 0.5175,
+        "n_home_rated_better": 3007,
+        "n_away_rated_better": 2893
+      },
+      "pass_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0181,
+        "home_cover_rate_when_home_rated_better": 0.4963,
+        "away_cover_rate_when_away_rated_better": 0.5162,
+        "n_home_rated_better": 2996,
+        "n_away_rated_better": 2904
+      },
+      "rush_edge": {
+        "n": 5900,
+        "pearson_r_vs_ats_margin": 0.0182,
+        "home_cover_rate_when_home_rated_better": 0.4902,
+        "away_cover_rate_when_away_rated_better": 0.5099,
+        "n_home_rated_better": 2972,
+        "n_away_rated_better": 2928
+      }
+    }
+  ],
+  "model_feature_test": {
+    "baseline_v2_overall": {
+      "seasons_scored": [
+        2002,
+        2003,
+        2004,
+        2005,
+        2006,
+        2007,
+        2008,
+        2009,
+        2010,
+        2011,
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "total_games_scored": 5537,
+      "games_flagged": 3808,
+      "flag_rate": 0.688,
+      "overall_hit_rate": 0.5126,
+      "breakeven_hit_rate_at_-110": 0.5238,
+      "rmse_model_vs_actual": 14.327,
+      "rmse_market_vs_actual": 13.178
+    },
+    "with_rolling10_added_overall": {
+      "seasons_scored": [
+        2002,
+        2003,
+        2004,
+        2005,
+        2006,
+        2007,
+        2008,
+        2009,
+        2010,
+        2011,
+        2012,
+        2013,
+        2014,
+        2015,
+        2016,
+        2017,
+        2018,
+        2019,
+        2020,
+        2021,
+        2022,
+        2023,
+        2024,
+        2025
+      ],
+      "total_games_scored": 5492,
+      "games_flagged": 3811,
+      "flag_rate": 0.694,
+      "overall_hit_rate": 0.5104,
+      "breakeven_hit_rate_at_-110": 0.5238,
+      "rmse_model_vs_actual": 14.316,
+      "rmse_market_vs_actual": 13.16
+    },
+    "with_rolling10_added_avg_coefficients": {
+      "intercept": 2.5685,
+      "pass_edge": 3.0361,
+      "rush_edge": -2.7004,
+      "rest_diff": 0.1274,
+      "wind": 0.0054,
+      "dome": -0.6497,
+      "qb_change_home": -3.7286,
+      "qb_change_away": 3.5871,
+      "injury_edge": 0.003,
+      "pass_edge_roll10": 1.8086,
+      "rush_edge_roll10": 3.6723
+    }
+  }
+}

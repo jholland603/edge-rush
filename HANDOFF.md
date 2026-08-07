@@ -1908,3 +1908,117 @@ later if wanted.
      not just the synthetic jsdom fixture.
 - Same deploy note as above: needs a Worker redeploy for the query changes
   and a `site/` push for the client changes, together.
+
+## Backtest v5: does the rolling-N-games idea actually correlate with ATS outcome? (No.)
+
+Jeff asked whether the rolling-window idea he just had approved (Team
+Comparison's "Last 10") could be backtested the same way other signals in
+this project have been -- does it actually predict against the spread, and
+is N=10 a good choice vs. other window sizes. New script:
+`scripts/backtest_v5_rolling10.py`, reuses `backtest_v2.py`'s data loading/
+EWMA/matchup/walk-forward machinery unchanged (same pattern as
+`backtest_v4_homedog.py`).
+
+**Scope decision, stated up front rather than silently assumed:** this
+backtest uses REGULAR SEASON games only, same as every other backtest in
+this project (`load_team_games()` filters `season_type == "REG"`) -- the
+*live* rolling-10 window on game.html includes playoffs (deliberately, per
+Jeff's original request), so this is a close-but-not-identical proxy, not
+an exact replica of the live feature. Extending to playoff EPA would mean
+pulling that out of D1 into `raw/team/`, which this didn't do.
+
+**Two tests run:**
+1. **Standalone correlation** (no regression, same style as the Big Home
+   Dog sniff test): built a leak-free rolling-N-game per-play EPA rating
+   (`shift(1).rolling(N, min_periods=1)`, same 4-way off/def x pass/rush
+   split as the EWMA ratings) for N = 5, 8, 10, 15, plus the existing
+   full-history EWMA as a baseline, and directly correlated each against
+   ATS margin across ~5,900-6,088 games (2002-2025, first 3 seasons held
+   out as train-only same as v2).
+2. **Walk-forward model-feature test** (same pattern as
+   `backtest_v4_homedog.py`): added the rolling-10 pass/rush edges as two
+   *extra* features on top of the model's existing full-history EWMA
+   features and reran the same walk-forward regression, to see whether the
+   rolling window adds anything the EWMA doesn't already have.
+
+**Result: no meaningful signal, at any window size, and no improvement to
+the model.**
+- Correlation with ATS margin was essentially zero everywhere -- Pearson
+  r = 0.0276 (EWMA baseline), 0.0298 (N=5), 0.0295 (N=8), **0.0294 (N=10)**,
+  0.022 (N=15). For context, the model's full multi-feature regression
+  (rest, weather, QB, injuries, EWMA ratings all combined) only reaches
+  51.26% hit rate against a 52.38% breakeven -- these single-window EPA
+  differentials, alone, aren't even in that neighborhood.
+- Cover rate when the "better-rated" team was picked hovered at 49.75-
+  51.95% across every window size and the EWMA baseline -- a coin flip,
+  not a signal, regardless of N.
+- Adding rolling-10 to the model's existing feature set didn't help either:
+  overall hit rate went from 51.26% (baseline v2) to 51.04% with it added
+  -- flat to marginally worse, well within noise, not an improvement.
+- **Takeaway on "is 10 a good number":** it doesn't matter which N you
+  pick (5/8/10/15) or even whether you use the full-history EWMA the model
+  already relies on -- team-strength differentials computed this way carry
+  essentially no leftover predictive power against the *closing* line on
+  their own. Consistent with a reasonably efficient market: the spread
+  already prices in team quality about as well as any of these EPA-based
+  measures can estimate it.
+- **Doesn't change what's live.** This was never proposed as a model
+  input -- it's a display panel (recent-form context for a human reading
+  the page), same category as Pass Defense Allowed/Common Opponents/
+  Turnover Margin, all already labeled "not tested" or "tested, no edge."
+  This result just confirms it belongs in that same bucket rather than
+  the "Favors"-badge bucket (Big Home Dog, QB Status) -- no site change
+  needed, no badge to add or remove.
+- Output: `backtest/backtest_v5_out/summary_v5.json`. Not committed to
+  the model -- purely a documented negative finding, same treatment as
+  fatigue and primetime elsewhere in this file.
+
+## Road Trip / Coming Off OT were leaking last season into Week 1 -- fixed. Plus: name the traveling team, kill generic "home"/"away" labels.
+
+Jeff, screenshot in hand: Dallas ending last season on a 3-game road trip
+shouldn't carry into this year's Week 1. He was right -- `getTeamRecentGames()`
+(Worker) fed Rest/Road Trip/Coming Off OT and used `WHERE season < ? OR
+(season = ? AND week < ?)`, i.e. it reached across the season boundary
+exactly like the rolling-10 stats deliberately do -- except here that's
+wrong. A team's road-game streak or "just played an OT game" status is a
+literal physical/scheduling fact that resets every offseason; there's no
+such thing as "still on a road trip" across a 7-month gap. (The rolling-10
+*form* stats are a different, intentional case -- recent quality doesn't
+reset just because the calendar flipped.)
+
+- Fixed: `getTeamRecentGames()` now filters `WHERE season = ? AND week < ?`
+  -- same season only. Week 1 (or any week with no prior games this season)
+  correctly returns an empty list; `teamFatigueFacts()` already handled
+  that safely (0 streak, `coming_off_overtime: null`) once the query
+  stopped feeding it stale rows -- no client change needed for this part.
+  Verified directly against D1: DAL entering `season=2025, week=1` now
+  returns 0 rows (was pulling from 2024 before); `week=5` still correctly
+  returns exactly Weeks 1-4 of 2025.
+- **Timezone Crossing now names the traveling team** -- Jeff: "let me know
+  which team is crossing time zones... I don't want to have to look back
+  up." The away team is always the one traveling (home team never leaves
+  its own zone), so the card body now reads e.g. "DAL crossing 3 time
+  zones" instead of a bare "3 zones".
+- **Swept the page for generic "home"/"away" labels and named the actual
+  team wherever it's unambiguous for this specific game** (Jeff: "I don't
+  like seeing home/away"): the "Final score" card's label now reads
+  "Final score (DAL-SEA)" instead of "(away-home)"; the model banner reads
+  "P(SEA covers)" instead of "P(home covers)". Left the Head-to-head table's
+  "Score (Away @ Home)" column header as an order label, not a team name --
+  unlike every other spot on this page, that table spans multiple past
+  meetings where home/away has actually flipped between the two teams
+  across different seasons, so a single fixed team-name pair in the header
+  would be wrong on some rows. Switched its wording to "@" to match the
+  Matchup column's own "AWAY @ HOME" convention instead, so the two
+  columns read the same way without naming a team that might be wrong two
+  rows down.
+- **Also moved the "Final score" card to the end of the summary row**
+  (was first) per Jeff's follow-up -- spread/total/conditions now lead,
+  final score trails.
+- Verified with the same `jsdom` harness (Week 1 DAL@SEA scenario): Road
+  Trip shows "DAL 1 straight / SEA 0 straight" (not a leaked 3-game
+  streak), Coming Off OT shows "-" for both, Timezone Crossing reads "DAL
+  crossing 3 time zones", card order is Spread/Total/Conditions/Final
+  score, model banner reads "P(SEA covers)". No runtime errors.
+- Needs a Worker redeploy (`getTeamRecentGames` query change) + `site/`
+  push (client wording/reorder) together, same as every change above.

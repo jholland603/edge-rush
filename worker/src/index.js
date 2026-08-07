@@ -948,9 +948,16 @@ const TEAM_TZ_OFFSET = {
   OAK: -8, SD: -8, STL: -6,
 };
 
-// Up to 8 of a team's most recent COMPLETED games strictly before
-// (season, week) -- enough to read off a road-game streak (rarely 4+ in
-// practice) and whether the last one went to overtime.
+// Up to 8 of a team's most recent COMPLETED games strictly before `week`,
+// SAME SEASON ONLY -- enough to read off a road-game streak (rarely 4+ in
+// practice) and whether the last one went to overtime. Deliberately does
+// NOT reach back into the prior season: a road trip or an OT game from
+// last year's finale has no bearing on Week 1 (a team's travel streak
+// resets every offseason), unlike the rolling-N-games "recent form" stats
+// elsewhere on this page, which intentionally do span season boundaries.
+// Week 1 (or any week with no prior games this season) correctly returns
+// an empty list -- teamFatigueFacts() below already treats that as "no
+// streak, no OT info" rather than reaching for stale data.
 async function getTeamRecentGames(DB, team, season, week, limit = 8) {
   const { results } = await DB.prepare(
     `
@@ -961,11 +968,11 @@ async function getTeamRecentGames(DB, team, season, week, limit = 8) {
       SELECT g.season, g.week, 0 AS is_home, g.overtime
       FROM game g WHERE g.away_team = ? AND g.result IS NOT NULL
     )
-    SELECT * FROM tg WHERE season < ? OR (season = ? AND week < ?)
-    ORDER BY season DESC, week DESC LIMIT ?
+    SELECT * FROM tg WHERE season = ? AND week < ?
+    ORDER BY week DESC LIMIT ?
     `
   )
-    .bind(team, team, season, season, week, limit)
+    .bind(team, team, season, week, limit)
     .all();
   return results;
 }
