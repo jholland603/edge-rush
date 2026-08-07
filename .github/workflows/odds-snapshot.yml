@@ -88,9 +88,23 @@ jobs:
         # This schedule runs year-round (16x/week during the season adds
         # up fast, but cron doesn't know it's July). Skip the paid API
         # call entirely -- this check is free, just reads the CSV already
-        # on disk -- if nothing's scheduled in the next 3 days. Also
-        # softens bye-heavy weeks where a "game day" call would otherwise
-        # burn a credit on a slate that doesn't include every team.
+        # on disk -- if nothing's scheduled in the next 60 days.
+        #
+        # Was a 3-day window originally, on the theory that odds are only
+        # worth capturing right before kickoff. Wrong: sportsbooks post
+        # spreads/totals for the whole upcoming week (and often further
+        # out -- Week 1 lines are live over a month before the season
+        # opens) long before the 3-day mark, and Phase 3 of this project
+        # (closing-line-value tracking) needs the *opening* line, not just
+        # the last few days of movement. A 3-day gate meant real snapshot
+        # collection couldn't start until ~3 days before Week 1 every
+        # year, throwing away over a month of legitimate movement data.
+        # 60 days still closes the gate during the true dead offseason
+        # (Super Bowl in Feb to ~mid-July, when games.csv has nothing
+        # upcoming within 60 days) while opening it back up for all of
+        # preseason and the actual season. Credit budget was never the
+        # real constraint here -- even running every scheduled slot
+        # year-round stays well under the free tier's 500/month.
         run: |
           python3 -c "
           import pandas as pd
@@ -100,9 +114,9 @@ jobs:
           upcoming['gameday'] = pd.to_datetime(upcoming['gameday'])
           window = upcoming[
               (upcoming['gameday'] >= pd.Timestamp(date.today() - timedelta(days=1)))
-              & (upcoming['gameday'] <= pd.Timestamp(date.today() + timedelta(days=3)))
+              & (upcoming['gameday'] <= pd.Timestamp(date.today() + timedelta(days=60)))
           ]
-          print(f'{len(window)} upcoming game(s) in the next few days')
+          print(f'{len(window)} upcoming game(s) in the next 60 days')
           print('has_games=' + ('true' if len(window) > 0 else 'false'))
           " | tee /tmp/gamecheck.log
           tail -1 /tmp/gamecheck.log >> "$GITHUB_OUTPUT"
