@@ -1747,3 +1747,79 @@ then back to "Deploy from a branch" / `main` / `/(root)` (current GitHub
 UI auto-saves on selection, no separate Save button). This edit is the
 trigger commit to test whether that reset actually clears the stuck
 deploy step — watch the next `pages-build-deployment` run.
+
+**Resolved.** The reset worked — the next deploy went through and the
+disclaimer-removal changes are live. Separately, GitHub had a real,
+platform-wide Actions/Pages incident open the same day (confirmed via
+githubstatus.com, "Major Outage" on both, 15:22-19:43+ UTC) which likely
+compounded the stuck-deployment symptom on top of the Jekyll timeout and
+the stale Pages environment — three distinct, now-resolved causes layered
+on top of each other, not one single root cause.
+
+## Last-season stat fallback for early-season games (Worker + page-game.js)
+
+Jeff: with the 2026 season not started yet (272 games scheduled, 0 played
+per D1), "To date" and "Full season" on Team Comparison -- and anything
+else derived from season-to-date data -- render empty for every game right
+now, and will stay nearly empty through the first few weeks once the
+season does start. Confirmed via D1 query: 2025 season is fully populated
+(285 games, 570 offense rows), 2026 has zero. Agreed this needs a fallback
+rather than showing blanks.
+
+**Design, with Jeff's sign-off on both questions:**
+- **Threshold: fewer than 4 games played this season** (per team,
+  independently) triggers the fallback to that team's full prior-season
+  line. Chosen over a raw week-number cutoff so it's robust to bye weeks.
+- **No blending** of last year's and this year's numbers into one combined
+  stat -- that's a modeling decision (what weight, tested how) not a
+  display one, and this project has been careful elsewhere not to show
+  numbers that look more rigorous than they are. Straight swap, clearly
+  labeled with the year, auto-reverts once real 2026 data exists.
+- **No permanent third toggle button** -- "To date" silently sources from
+  last season under the hood when this year's sample is thin, rather than
+  adding a button that's only useful for 3-4 weeks and then dead weight.
+  "Full season" is left alone (it's a retrospective/hindsight view, not
+  in scope here).
+- **Scope: all season-to-date-derived signals**, not just Team Comparison
+  -- Pass Defense Allowed, Common Opponents, and Turnover Margin all had
+  the same empty-early-season problem and now share the same fallback.
+
+**Implementation:**
+- Worker (`getGameDetail`): added `prior_season_full` to each side
+  (`getTeamAggregate(DB, team, season - 1, null)`) alongside the existing
+  `season_to_date`/`full_season`.
+- Worker (`getGameSituationalSignals`): new `SAMPLE_THIN_GAMES = 4`
+  constant. Home/away are evaluated independently (`homeSeasonResults.length
+  < 4`, reusing the query already run for common opponents -- no extra
+  round trip to compute "games played so far"). Pass Defense Allowed
+  switches per team independently since it's a single-team stat. Common
+  Opponents needs both sides drawn from the *same* season to mean anything
+  ("who did both teams already play"), so it falls back for both sides if
+  either one is thin. New response fields: `pass_defense_allowed.home_season`
+  /`away_season`, `common_opponents.season_used` -- the actual season each
+  number came from, for the client to label.
+- Site (`page-game.js`): new `effectiveToDateStats(side)` helper -- checks
+  `season_to_date.games_played < SEASON_THIN_GAMES` (same literal, `4`,
+  duplicated rather than shared since Worker and site are separate
+  deploys) and returns prior-season stats + a `usingPrior` flag when thin.
+  Wired into `renderCompare()` for the "To date" view only (not "Full
+  season" -- untouched, out of scope) and into the Turnover Margin card's
+  client-side calculation (it was already deriving from
+  `season_to_date`, so this was a drop-in swap). Pass Defense Allowed and
+  Common Opponents pick up their season labels from the new
+  `*_season`/`season_used` fields. Every fallback is labeled inline --
+  e.g. "NE (2025)" in a stat row, "Common Opponents (2025)" as a card
+  title, "Games: NE 17 (2025) · SEA 17 (2025)" in the Team Comparison
+  caption -- so it's never silently passed off as current-season data.
+- **Verified with the same `jsdom` DOM harness used earlier this session**,
+  two scenarios: a mock Week 1 2026 game (`season_to_date.games_played =
+  0`) and a mock mid-season 2025 game (`games_played = 8`). Confirmed the
+  thin-sample game renders every affected card/caption with the correct
+  "(2025)" labels and prior-season values, and the healthy-sample game
+  renders with zero fallback labels and current-season values -- i.e. it
+  actually reverts, not just theoretically does. No runtime errors either
+  run.
+- Needs both a Worker redeploy (`prior_season_full`, signal fallback
+  fields) and the `site/` push (client-side switching logic) to take
+  effect together -- half-deployed would either 404 on missing fields or
+  silently show no fallback.

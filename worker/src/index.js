@@ -1104,8 +1104,16 @@ function primetimeBucket(weekday, gametime) {
   return "Other";
 }
 
+// Fewer than this many games played this season -> the season-to-date
+// sample for that team is too small to be worth showing on its own, so
+// pass-defense-allowed and common-opponents fall back to last season's
+// full numbers instead. Mirrors SEASON_THIN_GAMES in page-game.js (kept as
+// a literal in both places -- worker and site are separate deploys).
+const SAMPLE_THIN_GAMES = 4;
+
 async function getGameSituationalSignals(DB, game) {
   const bigHomeDogApplies = game.spread_line !== null && game.spread_line <= -7;
+  const priorSeason = game.season - 1;
 
   const [
     homeRecent, awayRecent, homeQb, awayQb, coachTenure, draftCapital, refereeName,
@@ -1123,6 +1131,26 @@ async function getGameSituationalSignals(DB, game) {
     getTeamSeasonResults(DB, game.home_team, game.season, game.week),
     getTeamSeasonResults(DB, game.away_team, game.season, game.week),
   ]);
+
+  // Early-season fallback. Pass defense allowed switches per team
+  // independently (it's a single-team stat); common opponents needs both
+  // sides drawn from the same season to mean anything, so it falls back
+  // for both teams if either one is thin.
+  const homeThin = homeSeasonResults.length < SAMPLE_THIN_GAMES;
+  const awayThin = awaySeasonResults.length < SAMPLE_THIN_GAMES;
+  const commonOppUsePrior = homeThin || awayThin;
+
+  const [homePassDefPrior, awayPassDefPrior, homeSeasonResultsPrior, awaySeasonResultsPrior] = await Promise.all([
+    homeThin ? getTeamPassDefenseAllowed(DB, game.home_team, priorSeason, null) : Promise.resolve(null),
+    awayThin ? getTeamPassDefenseAllowed(DB, game.away_team, priorSeason, null) : Promise.resolve(null),
+    commonOppUsePrior ? getTeamSeasonResults(DB, game.home_team, priorSeason, null) : Promise.resolve(null),
+    commonOppUsePrior ? getTeamSeasonResults(DB, game.away_team, priorSeason, null) : Promise.resolve(null),
+  ]);
+
+  const homePassDef = homeThin ? homePassDefPrior : homePassDefAllowed;
+  const awayPassDef = awayThin ? awayPassDefPrior : awayPassDefAllowed;
+  const homeCoResults = commonOppUsePrior ? homeSeasonResultsPrior : homeSeasonResults;
+  const awayCoResults = commonOppUsePrior ? awaySeasonResultsPrior : awaySeasonResults;
 
   const homeTz = TEAM_TZ_OFFSET[game.home_team];
   const awayTz = TEAM_TZ_OFFSET[game.away_team];
@@ -1173,20 +1201,23 @@ async function getGameSituationalSignals(DB, game) {
       note: "Not tested at all -- no backtest has been run comparing referees to any outcome. Shown purely as a fact.",
     },
     pass_defense_allowed: {
-      home: passerRating(homePassDefAllowed),
-      away: passerRating(awayPassDefAllowed),
-      note: "Not tested as a standalone ATS signal in this project -- a standard, real quality metric (traditional NFL passer rating formula applied to what each defense has allowed season-to-date), just not backtested here. Different from the model's own EPA-based ratings.",
+      home: passerRating(homePassDef),
+      away: passerRating(awayPassDef),
+      home_season: homeThin ? priorSeason : game.season,
+      away_season: awayThin ? priorSeason : game.season,
+      note: "Not tested as a standalone ATS signal in this project -- a standard, real quality metric (traditional NFL passer rating formula applied to what each defense has allowed), just not backtested here. Different from the model's own EPA-based ratings. Falls back to last season's full numbers until a team has played a handful of games this year.",
     },
     common_opponents: {
-      opponents: commonOpponents(homeSeasonResults, awaySeasonResults, game.home_team, game.away_team),
-      note: "Not a repeatable trend, nothing to backtest -- a scouting comparison, not a signal. Positive margin = that team won by that many points on average against the shared opponent.",
+      opponents: commonOpponents(homeCoResults, awayCoResults, game.home_team, game.away_team),
+      season_used: commonOppUsePrior ? priorSeason : game.season,
+      note: "Not a repeatable trend, nothing to backtest -- a scouting comparison, not a signal. Positive margin = that team won by that many points on average against the shared opponent. Falls back to last season's full slate until both teams have played a handful of games this year.",
     },
     primetime: {
       bucket: primetimeBucket(game.weekday, game.gametime),
       note: "Tested: Thursday/Sunday-night/Monday/Saturday games all land within a point or two of a 50/50 home cover rate (48.3-51.5% across n=250-5,517 each) -- no clean trend by time slot.",
     },
     turnover_margin_note:
-      "Not tested in this project. Widely-cited public research (fumble recovery rates in particular are close to a coin flip) suggests raw turnover margin doesn't reliably predict future performance -- shown as a descriptive fact only, computed from season-to-date takeaways (defensive INTs + recovered opponent fumbles) minus giveaways (INTs thrown + fumbles lost).",
+      "Not tested in this project. Widely-cited public research (fumble recovery rates in particular are close to a coin flip) suggests raw turnover margin doesn't reliably predict future performance -- shown as a descriptive fact only, computed from takeaways (defensive INTs + recovered opponent fumbles) minus giveaways (INTs thrown + fumbles lost). Falls back to last season's full numbers until a team has played a handful of games this year.",
   };
 }
 
@@ -1215,7 +1246,7 @@ async function getGameDetail(DB, gameId) {
     .first();
   if (!game) return null;
 
-  const [model, homeToDate, awayToDate, homeFull, awayFull, h2h, teamNames, signals] = await Promise.all([
+  const [model, homeToDate, awayToDate, homeFull, awayFull, homePrior, awayPrior, h2h, teamNames, signals] = await Promise.all([
     DB.prepare(
       `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total, updated, note
        FROM model WHERE game_id = ?`
@@ -1226,6 +1257,12 @@ async function getGameDetail(DB, gameId) {
     getTeamAggregate(DB, game.away_team, game.season, game.week),
     getTeamAggregate(DB, game.home_team, game.season, null),
     getTeamAggregate(DB, game.away_team, game.season, null),
+    // Prior season's full-season line. Early in a new season "to date" is
+    // too thin to mean anything (0 games entering Week 1) -- the site
+    // falls back to this until a team has played a handful of games this
+    // year. See effectiveToDateStats() in page-game.js.
+    getTeamAggregate(DB, game.home_team, game.season - 1, null),
+    getTeamAggregate(DB, game.away_team, game.season - 1, null),
     DB.prepare(
       `
       SELECT game_id, season, week, game_type_code AS game_type, gameday, home_team, away_team, home_score, away_score, result, spread_line
@@ -1251,8 +1288,8 @@ async function getGameDetail(DB, gameId) {
     game,
     model: model ? { ...model, flagged: !!model.flagged } : null,
     signals,
-    home: { team: game.home_team, season_to_date: homeToDate, full_season: homeFull },
-    away: { team: game.away_team, season_to_date: awayToDate, full_season: awayFull },
+    home: { team: game.home_team, season_to_date: homeToDate, full_season: homeFull, prior_season_full: homePrior },
+    away: { team: game.away_team, season_to_date: awayToDate, full_season: awayFull, prior_season_full: awayPrior },
     team_names,
     head_to_head: h2h.results,
     updated: new Date().toISOString(),
