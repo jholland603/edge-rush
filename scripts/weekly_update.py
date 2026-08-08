@@ -150,7 +150,7 @@ def load_team_games(raw_dir: Path) -> pd.DataFrame:
                  "off_rush_epa_play": "def_rush_epa_play"}
     )
     df = df.merge(key, on=["game_id", "opponent_team"], how="left")
-    return df[["season", "week", "team", "game_id",
+    return df[["season", "week", "team", "opponent_team", "game_id",
                "off_pass_epa_play", "off_rush_epa_play",
                "def_pass_epa_play", "def_rush_epa_play"]]
 
@@ -173,6 +173,120 @@ def current_ratings_all(team_games: pd.DataFrame, window: int = ROLLING_WINDOW) 
             r[name] = 0.0 if pd.isna(v) else float(v)
         rows.append(r)
     return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------
+# Opponent-similarity-weighted ratings -- INFORMATIONAL ONLY, shown as a
+# game.html card, never fed into FEATURES/predicted_margin above. Jeff's
+# idea: instead of a flat average over a team's last 10 games, weight each
+# of those games by how similar that game's opponent was, in the relevant
+# unit, to the opponent this week (e.g. weight a team's pass-offense games
+# toward the ones played against a similar-quality pass defense to this
+# week's). Backtested in scripts/backtest_v6_similarity_weighted.py: no
+# meaningful improvement over the flat rolling-10 average when added as a
+# model feature (hit rate 51.26% -> 51.25%, RMSE unchanged) -- see
+# HANDOFF.md. Kept visible anyway, per Jeff's explicit ask, as a secondary
+# "does recent form look different against similar competition" card.
+#
+# SIMILARITY_BANDWIDTH_MULTIPLIER=1.0 was the middle of the 4 bandwidths
+# tested in backtest_v6 (0.5/1.0/2.0/4.0x the pooled rating std) -- 0.5x had
+# the best standalone correlation but also the most sample-thinning
+# (effective ~5.6 of 10 games); 1.0x is a deliberately less-jumpy choice for
+# a display card (effective ~8/10), not a re-optimization -- the model
+# feature test didn't find a winner to tune toward.
+SIMILARITY_BANDWIDTH_MULTIPLIER = 1.0
+
+
+def build_entering_ratings_with_opponent(team_games: pd.DataFrame, window: int = ROLLING_WINDOW) -> pd.DataFrame:
+    """Leak-free entering rating per (team, game), plus the OPPONENT's own
+    entering rating as of that same historical game -- i.e. how good was the
+    team I played, at the time I played them. Same construction as
+    backtest_v6_similarity_weighted.py's build_entering_ratings; duplicated
+    here (not imported) since this script intentionally has no dependency on
+    the backtest scripts -- kept in sync by hand if the method ever changes."""
+    tg = team_games.sort_values(["team", "season", "week"]).reset_index(drop=True)
+
+    def rolling_leak_free(col):
+        return tg.groupby("team")[col].transform(
+            lambda s: s.shift(1).rolling(window, min_periods=1).mean()
+        )
+
+    tg["r_off_pass"] = rolling_leak_free("off_pass_epa_play")
+    tg["r_off_rush"] = rolling_leak_free("off_rush_epa_play")
+    tg["r_def_pass"] = rolling_leak_free("def_pass_epa_play")
+    tg["r_def_rush"] = rolling_leak_free("def_rush_epa_play")
+
+    opp = tg[["game_id", "team", "r_off_pass", "r_off_rush", "r_def_pass", "r_def_rush"]].rename(
+        columns={
+            "team": "opponent_team", "r_off_pass": "opp_r_off_pass", "r_off_rush": "opp_r_off_rush",
+            "r_def_pass": "opp_r_def_pass", "r_def_rush": "opp_r_def_rush",
+        }
+    )
+    return tg.merge(opp, on=["game_id", "opponent_team"], how="left")
+
+
+def similarity_global_std(tg: pd.DataFrame) -> float:
+    vals = pd.concat([tg["r_off_pass"], tg["r_off_rush"], tg["r_def_pass"], tg["r_def_rush"]])
+    return float(vals.std(skipna=True))
+
+
+_SIM_ARRAY_COLS = {
+    "off_pass": "off_pass_epa_play", "off_rush": "off_rush_epa_play",
+    "def_pass": "def_pass_epa_play", "def_rush": "def_rush_epa_play",
+    "opp_r_off_pass": "opp_r_off_pass", "opp_r_off_rush": "opp_r_off_rush",
+    "opp_r_def_pass": "opp_r_def_pass", "opp_r_def_rush": "opp_r_def_rush",
+}
+
+
+def build_similarity_team_arrays(tg: pd.DataFrame) -> dict:
+    return {
+        team: {k: g[col].to_numpy(dtype=float) for k, col in _SIM_ARRAY_COLS.items()}
+        for team, g in tg.groupby("team")
+    }
+
+
+def kernel_weighted(opp_vals: np.ndarray, stat_vals: np.ndarray, target: float, bandwidth: float):
+    """Gaussian-kernel weighted average of `stat_vals`, weighted by how close
+    `opp_vals` is to `target`. Returns (rating, effective_sample_size), NaN
+    if nothing usable. Identical logic to backtest_v6_similarity_weighted.py."""
+    if opp_vals.size == 0 or np.isnan(target):
+        return np.nan, np.nan
+    valid = ~np.isnan(opp_vals) & ~np.isnan(stat_vals)
+    if not valid.any():
+        return np.nan, np.nan
+    diffs = opp_vals[valid] - target
+    vals = stat_vals[valid]
+    w = np.exp(-0.5 * (diffs / bandwidth) ** 2)
+    wsum = w.sum()
+    if wsum <= 1e-9:  # kernel collapsed to ~0 everywhere -- fall back to flat
+        w = np.ones(len(vals))
+        wsum = float(len(vals))
+    rating = float((vals * w).sum() / wsum)
+    ess = float((w.sum() ** 2) / (w ** 2).sum())
+    return rating, ess
+
+
+def similarity_weighted_ratings(team_arrays: dict, team: str, opp_def_pass: float, opp_def_rush: float,
+                                 opp_off_pass: float, opp_off_rush: float, bandwidth: float, window: int):
+    """This team's last `window` games, reweighted toward opponents similar
+    to the one it's ABOUT to play (opp_def_pass/opp_def_rush/opp_off_pass/
+    opp_off_rush = that upcoming opponent's own CURRENT rating -- there's no
+    "as of the time" restriction needed here since nothing has happened
+    after "now" yet). Returns (off_pass, off_rush, def_pass, def_rush,
+    avg_effective_sample_size)."""
+    arr = team_arrays.get(team)
+    if arr is None:
+        return 0.0, 0.0, 0.0, 0.0, None
+    n = len(arr["off_pass"])
+    lo = max(0, n - window)
+    off_pass, ess1 = kernel_weighted(arr["opp_r_def_pass"][lo:n], arr["off_pass"][lo:n], opp_def_pass, bandwidth)
+    off_rush, ess2 = kernel_weighted(arr["opp_r_def_rush"][lo:n], arr["off_rush"][lo:n], opp_def_rush, bandwidth)
+    def_pass, ess3 = kernel_weighted(arr["opp_r_off_pass"][lo:n], arr["def_pass"][lo:n], opp_off_pass, bandwidth)
+    def_rush, ess4 = kernel_weighted(arr["opp_r_off_rush"][lo:n], arr["def_rush"][lo:n], opp_off_rush, bandwidth)
+    ess_vals = [e for e in (ess1, ess2, ess3, ess4) if not np.isnan(e)]
+    avg_ess = float(np.mean(ess_vals)) if ess_vals else None
+    clean = lambda v: 0.0 if np.isnan(v) else v
+    return clean(off_pass), clean(off_rush), clean(def_pass), clean(def_rush), avg_ess
 
 
 # --------------------------------------------------------------------------
@@ -250,6 +364,12 @@ def main():
     print(f"Computing each team's CURRENT rating (last {ROLLING_WINDOW} games, entering their next game)...")
     cur = current_ratings_all(team_games)
 
+    print("Building opponent-similarity-weighted ratings (informational only, see game.html card -- "
+          "NOT used in the prediction below)...")
+    sim_tg = build_entering_ratings_with_opponent(team_games, ROLLING_WINDOW)
+    sim_bandwidth = SIMILARITY_BANDWIDTH_MULTIPLIER * similarity_global_std(sim_tg)
+    sim_team_arrays = build_similarity_team_arrays(sim_tg)
+
     print(f"Loading pre-fitted coefficients from {args.coefficients}...")
     coef, calib, coef_meta = load_coefficients(args.coefficients)
     print(f"  fitted {coef_meta.get('fitted_at')} on {coef_meta.get('n_historical_games')} "
@@ -295,6 +415,23 @@ def main():
         qb_change_home = int(home_qb_out)
         qb_change_away = int(away_qb_out)
 
+        # Opponent-similarity-weighted comparison -- informational only (see
+        # comment on similarity_weighted_ratings above). Reuses the SAME
+        # opponent targets (a[...]/h[...], i.e. the actual upcoming
+        # opponent's current flat rating) as the real pass_edge/rush_edge
+        # above -- the only difference is HOW each team's own last-10
+        # window gets averaged (flat vs. opponent-similarity-weighted).
+        h_op, h_or, h_dp, h_dr, h_ess = similarity_weighted_ratings(
+            sim_team_arrays, home, a["def_pass"], a["def_rush"], a["off_pass"], a["off_rush"],
+            sim_bandwidth, ROLLING_WINDOW
+        )
+        a_op, a_or, a_dp, a_dr, a_ess = similarity_weighted_ratings(
+            sim_team_arrays, away, h["def_pass"], h["def_rush"], h["off_pass"], h["off_rush"],
+            sim_bandwidth, ROLLING_WINDOW
+        )
+        pass_edge_weighted = (h_op - a_dp) - (a_op - h_dp)
+        rush_edge_weighted = (h_or - a_dr) - (a_or - h_dr)
+
         feat = {"pass_edge": pass_edge, "rush_edge": rush_edge, "rest_diff": rest_diff,
                 "wind": wind, "dome": dome, "qb_change_home": qb_change_home,
                 "qb_change_away": qb_change_away, "injury_edge": injury_edge}
@@ -319,6 +456,9 @@ def main():
             "away_qb_established": est_starters.get(away),
             "home_qb_out_flag": qb_change_home, "away_qb_out_flag": qb_change_away,
             "home_injuries_out": home_out, "away_injuries_out": away_out,
+            "flat_pass_edge": pass_edge, "flat_rush_edge": rush_edge,
+            "weighted_pass_edge": pass_edge_weighted, "weighted_rush_edge": rush_edge_weighted,
+            "home_avg_ess": h_ess, "away_avg_ess": a_ess,
         })
 
     preds = pd.DataFrame(rows)
@@ -380,8 +520,38 @@ def main():
     else:
         run_d1_statements(picks_stmts, args.db_name)
 
+    # ---- upsert the opponent-similarity comparison into D1
+    # `model_similarity` -- INFORMATIONAL ONLY (see the big comment above
+    # similarity_weighted_ratings()), a game.html display card, never read
+    # by the pick logic above. Same upsert-on-game_id pattern as `model`. ----
+    sim_stmts = []
+    for r in preds.itertuples():
+        sim_stmts.append(
+            "INSERT INTO model_similarity (game_id, bandwidth_multiplier, flat_pass_edge, "
+            "flat_rush_edge, weighted_pass_edge, weighted_rush_edge, home_avg_ess, away_avg_ess, "
+            "updated) VALUES ("
+            f"{sql_str(r.game_id)}, {sql_num(SIMILARITY_BANDWIDTH_MULTIPLIER)}, "
+            f"{sql_num(r.flat_pass_edge)}, {sql_num(r.flat_rush_edge)}, "
+            f"{sql_num(r.weighted_pass_edge)}, {sql_num(r.weighted_rush_edge)}, "
+            f"{sql_num(r.home_avg_ess)}, {sql_num(r.away_avg_ess)}, {sql_str(updated_at)}) "
+            "ON CONFLICT(game_id) DO UPDATE SET "
+            "bandwidth_multiplier=excluded.bandwidth_multiplier, "
+            "flat_pass_edge=excluded.flat_pass_edge, flat_rush_edge=excluded.flat_rush_edge, "
+            "weighted_pass_edge=excluded.weighted_pass_edge, weighted_rush_edge=excluded.weighted_rush_edge, "
+            "home_avg_ess=excluded.home_avg_ess, away_avg_ess=excluded.away_avg_ess, "
+            "updated=excluded.updated;"
+        )
+    print(f"Upserting {len(sim_stmts)} opponent-similarity comparison rows into D1 `model_similarity`...")
+    if args.sql_out:
+        with open(args.sql_out, "a", encoding="utf-8") as f:
+            f.write("\n".join(sim_stmts) + "\n")
+        print(f"  wrote statements to {args.sql_out} (not applied -- apply it yourself)")
+    else:
+        run_d1_statements(sim_stmts, args.db_name)
+
     print(f"\nDone. {len(model_stmts)} predictions upserted, "
-          f"{len(picks_stmts)} flagged picks submitted (new ones inserted, repeats ignored).")
+          f"{len(picks_stmts)} flagged picks submitted (new ones inserted, repeats ignored), "
+          f"{len(sim_stmts)} similarity-comparison rows upserted (informational only).")
     print(f"\n{DISCLAIMER}")
 
 

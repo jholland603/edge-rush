@@ -207,7 +207,7 @@
     }
     const {
       big_home_dog, fatigue, qb_status, coach_tenure, divisional, draft_capital, referee,
-      pass_defense_allowed, common_opponents, primetime, turnover_margin_note,
+      pass_defense_allowed, common_opponents, primetime, turnover_margin_note, opponent_similarity,
     } = signals;
 
     const cards = [];
@@ -378,6 +378,35 @@
           .join("")
       : `<span class="text-faint">No common opponents in either team's recent games.</span>`;
     cards.push(signalCard("Common Opponents", "untested", commonOppRows, common_opponents.note));
+
+    // Opponent-similarity-weighted form -- Jeff's idea, backtested (no
+    // meaningful improvement, see the note text below), shown anyway as
+    // context. Null until weekly_update.py has scored this game (same
+    // "not every game has this yet" pattern as the Model Prediction banner
+    // and the weather forecast card).
+    if (opponent_similarity) {
+      const fmtEdge = (v) => (v === null || v === undefined ? "-" : Util.signed(v, 3));
+      const fmtEss = (v) => (v === null || v === undefined ? "-" : `${Util.num(v, 1)}/10`);
+      cards.push(
+        signalCard(
+          "Opponent-Similarity-Adjusted Form",
+          "tested_no_signal",
+          `<div class="row"><span>Pass edge (flat &rarr; weighted)</span><span>${fmtEdge(opponent_similarity.flat_pass_edge)} &rarr; ${fmtEdge(opponent_similarity.weighted_pass_edge)}</span></div>` +
+            `<div class="row"><span>Rush edge (flat &rarr; weighted)</span><span>${fmtEdge(opponent_similarity.flat_rush_edge)} &rarr; ${fmtEdge(opponent_similarity.weighted_rush_edge)}</span></div>` +
+            `<div class="row text-faint" style="font-size:0.78rem;"><span>Eff. sample size</span><span>${Util.escapeHtml(g.away_team)} ${fmtEss(opponent_similarity.away_avg_ess)}, ${Util.escapeHtml(g.home_team)} ${fmtEss(opponent_similarity.home_avg_ess)}</span></div>`,
+          opponent_similarity.note
+        )
+      );
+    } else {
+      cards.push(
+        signalCard(
+          "Opponent-Similarity-Adjusted Form",
+          "tested_no_signal",
+          `<span class="text-faint">Not scored yet for this game.</span>`,
+          "Tested (backtest_v6_similarity_weighted.py): reweighting each team's last 10 games toward opponents similar to this week's showed no meaningful improvement over a flat average. Populated by weekly_update.py once this game has a posted line."
+        )
+      );
+    }
 
     signalsWrap.innerHTML = cards.join("");
   }

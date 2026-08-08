@@ -235,7 +235,13 @@ export default {
         if (!FANTASY_POSITIONS.includes(position)) {
           return json({ error: `unknown position ${position}, expected one of ${FANTASY_POSITIONS.join(", ")}` }, 400);
         }
-        const result = await getFantasyRankings(DB, Number(m[1]), Number(m[2]), position);
+        // Defaults to top 10 for the rankings page; the lineup optimizer
+        // asks for the full pool (?limit=300) since it needs every
+        // salary-eligible player, not just the best 10, to solve the cap
+        // problem properly. Capped at 500 -- the largest position pool
+        // (WR) doesn't come close to that, so this is just abuse-proofing.
+        const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 10, 1), 500);
+        const result = await getFantasyRankings(DB, Number(m[1]), Number(m[2]), position, limit);
         if (result === null) return notFound(`no schedule for ${m[1]} week ${m[2]}`);
         return json(result);
       }
@@ -1228,12 +1234,31 @@ function primetimeBucket(weekday, gametime) {
   return "Other";
 }
 
+// Opponent-similarity-weighted form -- Jeff's idea: instead of a flat
+// average over a team's last 10 games, weight each of those games by how
+// similar that game's opponent was (in the relevant unit) to this week's
+// opponent. Computed by weekly_update.py (see the big comment above
+// similarity_weighted_ratings() there) and stored in `model_similarity`,
+// keyed by game_id -- NOT computed live here, so the number shown always
+// matches exactly what was actually backtested (backtest_v6_similarity_
+// weighted.py). Null until that script has scored this game (same
+// "not every game has this yet" pattern as `model` and `weather_forecast`).
+async function getModelSimilarity(DB, gameId) {
+  return DB.prepare(
+    `SELECT bandwidth_multiplier, flat_pass_edge, flat_rush_edge,
+            weighted_pass_edge, weighted_rush_edge, home_avg_ess, away_avg_ess, updated
+     FROM model_similarity WHERE game_id = ?`
+  )
+    .bind(gameId)
+    .first();
+}
+
 async function getGameSituationalSignals(DB, game) {
   const bigHomeDogApplies = game.spread_line !== null && game.spread_line <= -7;
 
   const [
     homeRecentGames, awayRecentGames, homeQb, awayQb, coachTenure, draftCapital, refereeName,
-    homePassDef, awayPassDef, homeCoResults, awayCoResults,
+    homePassDef, awayPassDef, homeCoResults, awayCoResults, similarity,
   ] = await Promise.all([
     getTeamRecentGames(DB, game.home_team, game.season, game.week),
     getTeamRecentGames(DB, game.away_team, game.season, game.week),
@@ -1246,6 +1271,7 @@ async function getGameSituationalSignals(DB, game) {
     getTeamPassDefenseAllowedRolling(DB, game.away_team, game.gameday, RECENT_GAMES_WINDOW),
     getTeamRollingResults(DB, game.home_team, game.gameday, RECENT_GAMES_WINDOW),
     getTeamRollingResults(DB, game.away_team, game.gameday, RECENT_GAMES_WINDOW),
+    getModelSimilarity(DB, game.game_id),
   ]);
 
   const homeTz = TEAM_TZ_OFFSET[game.home_team];
@@ -1311,6 +1337,18 @@ async function getGameSituationalSignals(DB, game) {
     },
     turnover_margin_note:
       `Not tested in this project. Widely-cited public research (fumble recovery rates in particular are close to a coin flip) suggests raw turnover margin doesn't reliably predict future performance -- shown as a descriptive fact only, computed from takeaways (defensive INTs + recovered opponent fumbles) minus giveaways (INTs thrown + fumbles lost), over each team's last ${RECENT_GAMES_WINDOW} games.`,
+    opponent_similarity: similarity
+      ? {
+          flat_pass_edge: similarity.flat_pass_edge,
+          flat_rush_edge: similarity.flat_rush_edge,
+          weighted_pass_edge: similarity.weighted_pass_edge,
+          weighted_rush_edge: similarity.weighted_rush_edge,
+          home_avg_ess: similarity.home_avg_ess,
+          away_avg_ess: similarity.away_avg_ess,
+          bandwidth_multiplier: similarity.bandwidth_multiplier,
+          note: "Tested (backtest_v6_similarity_weighted.py): reweighting each team's last 10 games toward opponents similar to this week's, instead of a flat average, showed no meaningful improvement when added to the model (hit rate 51.26% -> 51.25%, RMSE unchanged) -- shown here as context only, never part of the model prediction above. Positive = favors home, same sign convention as the model's own pass_edge/rush_edge. Effective sample size (out of 10) shows how concentrated the weighting actually is for this matchup -- 10 would mean it's identical to a flat average.",
+        }
+      : null,
   };
 }
 
@@ -2407,7 +2445,7 @@ async function getDstOwnAverages(DB, cutoff, window) {
     -- keeps orphaned historical team_abbr values around (e.g. "OAK" has
     -- team_game rows only through the 2002 season, unrelated to the "LV"
     -- rows used for every game since; both exist as distinct entries in
-    -- the `team` dimension table). Without this, a defunct abbreviation
+    -- the team dimension table). Without this, a defunct abbreviation
     -- with a handful of 20-year-old games can rank purely because rn<=N
     -- trivially includes its entire (tiny, ancient) history. In practice
     -- the opponent-map filter downstream in getFantasyRankings would
@@ -2475,7 +2513,7 @@ async function getInjuryStatuses(DB, season, week, playerIds) {
   return statuses;
 }
 
-async function getFantasyRankings(DB, season, week, position) {
+async function getFantasyRankings(DB, season, week, position, limit = 10) {
   const ctx = await getFantasyWeekContext(DB, season, week);
   if (!ctx) return null;
   const { opponents, cutoff } = ctx;
@@ -2504,7 +2542,7 @@ async function getFantasyRankings(DB, season, week, position) {
       })
       .filter((r) => r.opponent)
       .sort((a, b) => b.projected - a.projected)
-      .slice(0, 10);
+      .slice(0, limit);
     return { season, week, position, cutoff, window, scoring_note: "Standard DST scoring, not verified against DraftKings' current rule sheet -- see comment on DST_SCORE_SQL in the Worker source.", rankings };
   }
 
@@ -2537,17 +2575,32 @@ async function getFantasyRankings(DB, season, week, position) {
     })
     .filter((r) => r.opponent);
 
-  const playerIds = candidates.map((c) => c.player_id);
-  const injuries = await getInjuryStatuses(DB, season, week, playerIds);
-  for (const c of candidates) c.injury_status = injuries[c.player_id] || null;
+  // Look up injury status for a shortlist, not every candidate -- RB/WR
+  // especially can have 150-300+ eligible players league-wide, and
+  // getInjuryStatuses binds one SQL parameter per player_id. D1 caps bound
+  // parameters per query (100), so querying the full candidate pool in one
+  // shot was throwing a real error for the high-volume positions (RB/WR/TE
+  // all 500'd; QB/K, with far smaller pools, happened to stay under the
+  // limit and worked -- that's what gave it away). Sorted by projected
+  // points first, then chunked into batches of 90 (comfortably under the
+  // limit alongside the season/week params) run in parallel -- covers the
+  // whole requested pool (needed when the optimizer asks for limit=300+,
+  // not just the top-10 rankings page's default) without hitting the cap.
+  candidates.sort((a, b) => b.projected - a.projected);
+  const shortlist = candidates.slice(0, Math.max(limit, 40));
+  const CHUNK = 90;
+  const injuryChunks = await Promise.all(
+    Array.from({ length: Math.ceil(shortlist.length / CHUNK) || 0 }, (_, i) =>
+      getInjuryStatuses(DB, season, week, shortlist.slice(i * CHUNK, (i + 1) * CHUNK).map((c) => c.player_id))
+    )
+  );
+  const injuries = Object.assign({}, ...injuryChunks);
+  for (const c of shortlist) c.injury_status = injuries[c.player_id] || null;
 
   // Exclude players ruled Out -- can't recommend starting them. Questionable/
   // Doubtful stay in, flagged, since those are still real game-time-decision
   // players worth seeing ranked rather than silently dropped.
-  const rankings = candidates
-    .filter((c) => c.injury_status !== "Out")
-    .sort((a, b) => b.projected - a.projected)
-    .slice(0, 10);
+  const rankings = shortlist.filter((c) => c.injury_status !== "Out").slice(0, limit);
 
   const scoringNote =
     position === "K"
