@@ -182,19 +182,45 @@ def current_ratings_all(team_games: pd.DataFrame, window: int = ROLLING_WINDOW) 
 # of those games by how similar that game's opponent was, in the relevant
 # unit, to the opponent this week (e.g. weight a team's pass-offense games
 # toward the ones played against a similar-quality pass defense to this
-# week's). Backtested in scripts/backtest_v6_similarity_weighted.py: no
-# meaningful improvement over the flat rolling-10 average when added as a
-# model feature (hit rate 51.26% -> 51.25%, RMSE unchanged) -- see
-# HANDOFF.md. Kept visible anyway, per Jeff's explicit ask, as a secondary
-# "does recent form look different against similar competition" card.
+# week's) -- AND (added in scripts/backtest_v7_recency_similarity.py) weight
+# more recent games more heavily regardless of similarity: last 4 games get
+# 2x, next 3 get 1.5x, oldest 3 get 1x, stacked multiplicatively with the
+# similarity kernel. Backtested: pure similarity alone was a wash when added
+# as a model feature (hit rate 51.26% -> 51.25%); the combined recency +
+# similarity version (this one) was the first variant to move hit rate up at
+# all, 51.26% -> 51.33% -- still nowhere near the 52.4% breakeven, and not
+# something to treat as validated, but the least-bad result of everything
+# tried so far. See HANDOFF.md / backtest_v7_recency_similarity.py. Kept
+# visible per Jeff's explicit ask either way, as a secondary "does recent
+# form look different against similar competition" card.
 #
-# SIMILARITY_BANDWIDTH_MULTIPLIER=1.0 was the middle of the 4 bandwidths
-# tested in backtest_v6 (0.5/1.0/2.0/4.0x the pooled rating std) -- 0.5x had
-# the best standalone correlation but also the most sample-thinning
-# (effective ~5.6 of 10 games); 1.0x is a deliberately less-jumpy choice for
-# a display card (effective ~8/10), not a re-optimization -- the model
-# feature test didn't find a winner to tune toward.
-SIMILARITY_BANDWIDTH_MULTIPLIER = 1.0
+# SIMILARITY_BANDWIDTH_MULTIPLIER=0.5 is the tightest of the 4 bandwidths
+# tested (0.5/1.0/2.0/4.0x the pooled rating std) -- it had the best
+# standalone correlation both alone (v6) and combined with recency (v7), so
+# production now matches what the backtest actually preferred rather than a
+# deliberately-calmer compromise. Trade-off: more sample-thinning (effective
+# ~5.3 of 10 games combined with recency, vs ~7.6 at 1.0x) -- the avg_ess
+# shown on the card is exactly this, so a low number there is expected at
+# this setting, not a bug.
+SIMILARITY_BANDWIDTH_MULTIPLIER = 0.5
+
+
+# Recency tiers -- rank 1 = most recent game in a team's window, counting
+# backward. Rank-based (not position-based) so it still works correctly for
+# teams with fewer than 10 games of history (early season): their most
+# recent games still get the 2x/1.5x tiers, nothing falls through unweighted.
+def recency_multiplier(rank_from_recent: int) -> float:
+    if rank_from_recent <= 4:
+        return 2.0
+    if rank_from_recent <= 7:
+        return 1.5
+    return 1.0
+
+
+def recency_weights_for_length(length: int) -> np.ndarray:
+    # arr is ordered oldest -> newest (index 0 = oldest); rank from most
+    # recent for index i is (length - i).
+    return np.array([recency_multiplier(length - i) for i in range(length)])
 
 
 def build_entering_ratings_with_opponent(team_games: pd.DataFrame, window: int = ROLLING_WINDOW) -> pd.DataFrame:
@@ -245,10 +271,15 @@ def build_similarity_team_arrays(tg: pd.DataFrame) -> dict:
     }
 
 
-def kernel_weighted(opp_vals: np.ndarray, stat_vals: np.ndarray, target: float, bandwidth: float):
-    """Gaussian-kernel weighted average of `stat_vals`, weighted by how close
-    `opp_vals` is to `target`. Returns (rating, effective_sample_size), NaN
-    if nothing usable. Identical logic to backtest_v6_similarity_weighted.py."""
+def combined_weighted(opp_vals: np.ndarray, stat_vals: np.ndarray, target: float, bandwidth: float,
+                       recency_arr: np.ndarray):
+    """Weighted average of `stat_vals`, combining a Gaussian similarity
+    kernel (how close `opp_vals` is to `target`) with the recency tiers
+    (`recency_arr`), multiplicatively. Returns (rating, effective_sample_size),
+    NaN if nothing usable. Identical logic to
+    backtest_v7_recency_similarity.py's combined_weighted (similarity always
+    on here -- this script doesn't need the recency-only/similarity-only
+    toggle the backtest used for comparison)."""
     if opp_vals.size == 0 or np.isnan(target):
         return np.nan, np.nan
     valid = ~np.isnan(opp_vals) & ~np.isnan(stat_vals)
@@ -256,11 +287,16 @@ def kernel_weighted(opp_vals: np.ndarray, stat_vals: np.ndarray, target: float, 
         return np.nan, np.nan
     diffs = opp_vals[valid] - target
     vals = stat_vals[valid]
-    w = np.exp(-0.5 * (diffs / bandwidth) ** 2)
+    rec = recency_arr[valid]
+    kern = np.exp(-0.5 * (diffs / bandwidth) ** 2)
+    w = kern * rec
     wsum = w.sum()
-    if wsum <= 1e-9:  # kernel collapsed to ~0 everywhere -- fall back to flat
-        w = np.ones(len(vals))
-        wsum = float(len(vals))
+    if wsum <= 1e-9:  # kernel collapsed to ~0 everywhere -- fall back to recency-only, then flat
+        w = rec.copy()
+        wsum = w.sum()
+        if wsum <= 1e-9:
+            w = np.ones(len(vals))
+            wsum = float(len(vals))
     rating = float((vals * w).sum() / wsum)
     ess = float((w.sum() ** 2) / (w ** 2).sum())
     return rating, ess
@@ -272,17 +308,19 @@ def similarity_weighted_ratings(team_arrays: dict, team: str, opp_def_pass: floa
     to the one it's ABOUT to play (opp_def_pass/opp_def_rush/opp_off_pass/
     opp_off_rush = that upcoming opponent's own CURRENT rating -- there's no
     "as of the time" restriction needed here since nothing has happened
-    after "now" yet). Returns (off_pass, off_rush, def_pass, def_rush,
-    avg_effective_sample_size)."""
+    after "now" yet), AND toward more recent games regardless of similarity
+    (recency tiers, see comment above). Returns (off_pass, off_rush, def_pass,
+    def_rush, avg_effective_sample_size)."""
     arr = team_arrays.get(team)
     if arr is None:
         return 0.0, 0.0, 0.0, 0.0, None
     n = len(arr["off_pass"])
     lo = max(0, n - window)
-    off_pass, ess1 = kernel_weighted(arr["opp_r_def_pass"][lo:n], arr["off_pass"][lo:n], opp_def_pass, bandwidth)
-    off_rush, ess2 = kernel_weighted(arr["opp_r_def_rush"][lo:n], arr["off_rush"][lo:n], opp_def_rush, bandwidth)
-    def_pass, ess3 = kernel_weighted(arr["opp_r_off_pass"][lo:n], arr["def_pass"][lo:n], opp_off_pass, bandwidth)
-    def_rush, ess4 = kernel_weighted(arr["opp_r_off_rush"][lo:n], arr["def_rush"][lo:n], opp_off_rush, bandwidth)
+    rec = recency_weights_for_length(n - lo)
+    off_pass, ess1 = combined_weighted(arr["opp_r_def_pass"][lo:n], arr["off_pass"][lo:n], opp_def_pass, bandwidth, rec)
+    off_rush, ess2 = combined_weighted(arr["opp_r_def_rush"][lo:n], arr["off_rush"][lo:n], opp_def_rush, bandwidth, rec)
+    def_pass, ess3 = combined_weighted(arr["opp_r_off_pass"][lo:n], arr["def_pass"][lo:n], opp_off_pass, bandwidth, rec)
+    def_rush, ess4 = combined_weighted(arr["opp_r_off_rush"][lo:n], arr["def_rush"][lo:n], opp_off_rush, bandwidth, rec)
     ess_vals = [e for e in (ess1, ess2, ess3, ess4) if not np.isnan(e)]
     avg_ess = float(np.mean(ess_vals)) if ess_vals else None
     clean = lambda v: 0.0 if np.isnan(v) else v

@@ -389,7 +389,7 @@
       const fmtEss = (v) => (v === null || v === undefined ? "-" : `${Util.num(v, 1)}/10`);
       cards.push(
         signalCard(
-          "Opponent-Similarity-Adjusted Form",
+          "Recency + Opponent-Similarity-Adjusted Form",
           "tested_no_signal",
           `<div class="row"><span>Pass edge (flat &rarr; weighted)</span><span>${fmtEdge(opponent_similarity.flat_pass_edge)} &rarr; ${fmtEdge(opponent_similarity.weighted_pass_edge)}</span></div>` +
             `<div class="row"><span>Rush edge (flat &rarr; weighted)</span><span>${fmtEdge(opponent_similarity.flat_rush_edge)} &rarr; ${fmtEdge(opponent_similarity.weighted_rush_edge)}</span></div>` +
@@ -400,10 +400,10 @@
     } else {
       cards.push(
         signalCard(
-          "Opponent-Similarity-Adjusted Form",
+          "Recency + Opponent-Similarity-Adjusted Form",
           "tested_no_signal",
           `<span class="text-faint">Not scored yet for this game.</span>`,
-          "Tested (backtest_v6_similarity_weighted.py): reweighting each team's last 10 games toward opponents similar to this week's showed no meaningful improvement over a flat average. Populated by weekly_update.py once this game has a posted line."
+          "Tested (backtest_v6/v7): reweighting each team's last 10 games toward opponents similar to this week's, plus recent games more heavily, was the least-bad variant tried but still short of breakeven. Populated by weekly_update.py once this game has a posted line."
         )
       );
     }

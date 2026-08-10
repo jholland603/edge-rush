@@ -1346,7 +1346,7 @@ async function getGameSituationalSignals(DB, game) {
           home_avg_ess: similarity.home_avg_ess,
           away_avg_ess: similarity.away_avg_ess,
           bandwidth_multiplier: similarity.bandwidth_multiplier,
-          note: "Tested (backtest_v6_similarity_weighted.py): reweighting each team's last 10 games toward opponents similar to this week's, instead of a flat average, showed no meaningful improvement when added to the model (hit rate 51.26% -> 51.25%, RMSE unchanged) -- shown here as context only, never part of the model prediction above. Positive = favors home, same sign convention as the model's own pass_edge/rush_edge. Effective sample size (out of 10) shows how concentrated the weighting actually is for this matchup -- 10 would mean it's identical to a flat average.",
+          note: "Tested (backtest_v6_similarity_weighted.py, backtest_v7_recency_similarity.py): reweighting each team's last 10 games toward opponents similar to this week's, plus recent games more heavily (last 4 = 2x, next 3 = 1.5x, oldest 3 = 1x), was the first version of this idea to move hit rate up at all when added to the model (51.26% -> 51.33%) -- still well short of the 52.4% breakeven, not something to treat as validated, shown here as context only, never part of the model prediction above. Positive = favors home, same sign convention as the model's own pass_edge/rush_edge. Effective sample size (out of 10) shows how concentrated the weighting actually is for this matchup -- 10 would mean it's identical to a flat average.",
         }
       : null,
   };
