@@ -520,6 +520,14 @@ tr.expand-row td {
   content: "\25BC";
 }
 
+/* games.html Line/Total cells -- DraftKings' own line, shown on its own
+   line under the average via a <br> (see dkLineNote() in page-games.js).
+   Smaller and dimmer than the average above it so the average stays the
+   primary number in the cell; DK's line is context, not the headline. */
+.dk-delta {
+  font-size: 0.78em;
+}
+
 .compare-row {
   display: flex;
   align-items: baseline;

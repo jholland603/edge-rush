@@ -194,22 +194,28 @@
     return `<span class="odds-arrow odds-arrow--${direction}" title="${Util.escapeHtml(label)}"></span>`;
   }
 
-  // Small "DK +0.5" marker next to the Line/Total value when DraftKings'
-  // own line differs from the median -- Jeff bets at DK specifically, so
-  // "is my book off the field, and by how much" is worth surfacing right
-  // in the table, not just buried in game.html's detail view. Only makes
-  // sense alongside the average (useAverage cases), and only rendered
-  // when there's an actual gap to report.
-  function dkDeltaNote(avg, market) {
+  // DraftKings' own line, on its own line under the average -- Jeff bets at
+  // DK specifically, so "is my book off the field, and by how much" is
+  // worth surfacing right in the table, not just buried in game.html's
+  // detail view. Only makes sense alongside the average (useAverage cases),
+  // and only rendered when there's an actual gap to report.
+  //
+  // Used to show just the bare delta (e.g. "DK -1.50"), which was ambiguous
+  // for spreads: a delta on its own doesn't say which TEAM DK favors,
+  // especially when the average is a pick ("PICK DK -1.50" -- pick against
+  // what?). Now shows DK's actual line the same way the main cell does
+  // (favoredTeamLine for spread, the number itself for total), so it reads
+  // the same way at a glance instead of needing to do sign-convention math.
+  function dkLineNote(avg, market, homeTeam, awayTeam) {
     if (!avg || !avg.draftkings) return "";
     const dkValue = avg.draftkings[market];
     const medianValue = avg[market];
     if (dkValue === null || dkValue === undefined || medianValue === null || medianValue === undefined) return "";
     const delta = dkValue - medianValue;
     if (Math.abs(delta) < 0.01) return "";
+    const display = market === "spread" ? Util.favoredTeamLine(dkValue, homeTeam, awayTeam) : Util.num(dkValue, 1);
     const deltaStr = `${delta > 0 ? "+" : ""}${Util.num(delta, 2)}`;
-    const title = `DraftKings: ${dkValue} (median ${medianValue})`;
-    return ` <span class="text-faint dk-delta" title="${Util.escapeHtml(title)}">DK ${deltaStr}</span>`;
+    return `<br><span class="text-faint dk-delta">DK: ${display} (${deltaStr})</span>`;
   }
 
   // Same reasoning as game.html's summary cards (see page-game.js): for a
@@ -224,7 +230,7 @@
     const useAverage = !played && avg && avg.spread !== null;
     const value = useAverage ? avg.spread : g.spread_line;
     const title = useAverage ? ` title="Average across ${avg.book_count} book(s)"` : "";
-    const dkNote = useAverage ? dkDeltaNote(avg, "spread") : "";
+    const dkNote = useAverage ? dkLineNote(avg, "spread", g.home_team, g.away_team) : "";
     return `<span${title}>${Util.favoredTeamLine(value, g.home_team, g.away_team)}</span>${oddsArrow(lean && lean.odds_movement, "spread")}${dkNote}`;
   }
 
@@ -234,7 +240,7 @@
     const useAverage = !played && avg && avg.total !== null;
     const value = useAverage ? avg.total : g.total_line;
     const title = useAverage ? ` title="Average across ${avg.book_count} book(s)"` : "";
-    const dkNote = useAverage ? dkDeltaNote(avg, "total") : "";
+    const dkNote = useAverage ? dkLineNote(avg, "total", g.home_team, g.away_team) : "";
     return `<span${title}>${Util.num(value, 1)}</span>${oddsArrow(lean && lean.odds_movement, "total")}${dkNote}`;
   }
 
