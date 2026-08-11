@@ -438,6 +438,20 @@
     signalsWrap.innerHTML = cards.join("");
   }
 
+  // Per-game, not raw totals over the window -- added 2026-08-11 (Jeff's
+  // call). Raw totals over "last 10" or "full season" aren't directly
+  // comparable when the two teams' windows don't have the same number of
+  // games behind them (bye weeks, early season, a team with a short full-
+  // season sample) -- per-game averages are what "Yards", "Points Scored",
+  // etc. mean everywhere else in football anyway (YPG, PPG), so this also
+  // matches how bettors already read these numbers. EPA/play, FG Made/Att,
+  // and Punt Net Avg are left alone -- they're already rates (per-play or
+  // per-attempt), not raw totals, so dividing by games again would be wrong.
+  function perGame(t, field) {
+    return t && t.games_played ? t[field] / t.games_played : null;
+  }
+  const fmt1 = (v) => Util.num(v, 1);
+
   // Grouped into a handful of category cards instead of one long 16-row
   // table -- same data, far less vertical space. `higherBetter` drives a
   // subtle bold/accent highlight on whichever team has the better raw
@@ -448,48 +462,52 @@
     {
       title: "Scoring",
       rows: [
-        { label: "Points Scored", get: (t) => t.points_scored, higherBetter: true },
-        { label: "Points Allowed", get: (t) => t.points_allowed, higherBetter: false },
+        { label: "Points Scored/G", get: (t) => perGame(t, "points_scored"), fmt: fmt1, higherBetter: true },
+        { label: "Points Allowed/G", get: (t) => perGame(t, "points_allowed"), fmt: fmt1, higherBetter: false },
       ],
     },
     {
       title: "Passing",
       rows: [
-        { label: "Yards", get: (t) => t.passing_yards, higherBetter: true },
-        { label: "TD", get: (t) => t.passing_tds, higherBetter: true },
+        { label: "Yards/G", get: (t) => perGame(t, "passing_yards"), fmt: fmt1, higherBetter: true },
+        { label: "TD/G", get: (t) => perGame(t, "passing_tds"), fmt: fmt1, higherBetter: true },
         { label: "EPA/play", get: (t) => (t.attempts ? t.passing_epa / t.attempts : null), fmt: (v) => Util.signed(v, 2), higherBetter: true },
-        { label: "INT Thrown", get: (t) => t.passing_interceptions, higherBetter: false },
+        { label: "INT Thrown/G", get: (t) => perGame(t, "passing_interceptions"), fmt: fmt1, higherBetter: false },
       ],
     },
     {
       title: "Rushing",
       rows: [
-        { label: "Yards", get: (t) => t.rushing_yards, higherBetter: true },
-        { label: "TD", get: (t) => t.rushing_tds, higherBetter: true },
+        { label: "Yards/G", get: (t) => perGame(t, "rushing_yards"), fmt: fmt1, higherBetter: true },
+        { label: "TD/G", get: (t) => perGame(t, "rushing_tds"), fmt: fmt1, higherBetter: true },
         { label: "EPA/play", get: (t) => (t.carries ? t.rushing_epa / t.carries : null), fmt: (v) => Util.signed(v, 2), higherBetter: true },
       ],
     },
     {
       title: "Defense",
       rows: [
-        { label: "Sacks", get: (t) => t.def_sacks, higherBetter: true },
-        { label: "INT", get: (t) => t.def_interceptions, higherBetter: true },
-        { label: "TFL", get: (t) => t.def_tackles_for_loss, higherBetter: true },
-        { label: "Forced Fum.", get: (t) => t.def_fumbles_forced, higherBetter: true },
+        { label: "Sacks/G", get: (t) => perGame(t, "def_sacks"), fmt: fmt1, higherBetter: true },
+        { label: "INT/G", get: (t) => perGame(t, "def_interceptions"), fmt: fmt1, higherBetter: true },
+        { label: "TFL/G", get: (t) => perGame(t, "def_tackles_for_loss"), fmt: fmt1, higherBetter: true },
+        { label: "Forced Fum./G", get: (t) => perGame(t, "def_fumbles_forced"), fmt: fmt1, higherBetter: true },
       ],
     },
     {
       title: "Discipline & Special Teams",
       rows: [
         {
-          label: "Turnovers Lost",
-          get: (t) => (t.sack_fumbles_lost || 0) + (t.rushing_fumbles_lost || 0) + (t.receiving_fumbles_lost || 0),
+          label: "Turnovers Lost/G",
+          get: (t) =>
+            t && t.games_played
+              ? ((t.sack_fumbles_lost || 0) + (t.rushing_fumbles_lost || 0) + (t.receiving_fumbles_lost || 0)) / t.games_played
+              : null,
+          fmt: fmt1,
           higherBetter: false,
         },
         { label: "FG Made/Att", get: (t) => `${t.fg_made ?? 0}/${t.fg_att ?? 0}`, fmt: (v) => v, higherBetter: null },
         { label: "Punt Net Avg", get: (t) => (t.pt_att ? t.pt_net_yards / t.pt_att : null), fmt: (v) => Util.num(v, 1), higherBetter: true },
-        { label: "Penalties", get: (t) => t.penalties, higherBetter: false },
-        { label: "Penalty Yds", get: (t) => t.penalty_yards, higherBetter: false },
+        { label: "Penalties/G", get: (t) => perGame(t, "penalties"), fmt: fmt1, higherBetter: false },
+        { label: "Penalty Yds/G", get: (t) => perGame(t, "penalty_yards"), fmt: fmt1, higherBetter: false },
       ],
     },
   ];
