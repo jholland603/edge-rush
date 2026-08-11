@@ -366,28 +366,24 @@
     // only started 2026-08-07, no graded games have movement history behind
     // them), shown as a fact so it's on record while history accumulates,
     // same "build the infra now, judge it later" pattern as opponent_similarity
-    // above. Values stay in odds_snapshot's own convention (negative = home
-    // favored) rather than converting to this page's spread convention --
-    // the arrow direction is flipped to match instead (mirrors games.html's
-    // oddsArrow), so "up" always means "line moved toward the home team"
-    // regardless of which raw number went up or down underneath.
+    // above. Values come out of odds_snapshot in its own convention
+    // (negative = home favored) -- negate before handing to
+    // favoredTeamLine (same conversion renderOdds() below already does),
+    // so this reads as "SEA -3.5 -> NE +1.5" instead of a bare signed
+    // number with no team attached. No separate direction arrow here (Jeff
+    // doesn't want home/away-only labels, and once both ends of the move
+    // are team-qualified, an arrow tied to the raw number's sign is more
+    // confusing than the plain open -> latest values already are).
     if (line_movement) {
-      const arrow = (m, market) => {
-        if (!m || !m.moved) return "";
-        let direction = m.direction;
-        if (market === "spread") {
-          direction = direction === "up" ? "down" : direction === "down" ? "up" : direction;
-        }
-        if (direction !== "up" && direction !== "down") return "";
-        return `<span class="odds-arrow odds-arrow--${direction}" style="margin-left:4px;"></span>`;
-      };
-      const fmtLine = (v) => (v === null || v === undefined ? "-" : Util.num(v, 1));
+      const fmtSpread = (v) =>
+        v === null || v === undefined ? "-" : Util.favoredTeamLine(-v, g.home_team, g.away_team);
+      const fmtTotal = (v) => (v === null || v === undefined ? "-" : Util.num(v, 1));
       cards.push(
         signalCard(
           "Line Movement",
           "untested",
-          `<div class="row"><span>Spread (home, neg = favored)</span><span>${fmtLine(line_movement.spread.open)} &rarr; ${fmtLine(line_movement.spread.latest)}${arrow(line_movement.spread, "spread")}</span></div>` +
-            `<div class="row"><span>Total</span><span>${fmtLine(line_movement.total.open)} &rarr; ${fmtLine(line_movement.total.latest)}${arrow(line_movement.total, "total")}</span></div>`,
+          `<div class="row"><span>Spread</span><span>${fmtSpread(line_movement.spread.open)} &rarr; ${fmtSpread(line_movement.spread.latest)}</span></div>` +
+            `<div class="row"><span>Total</span><span>${fmtTotal(line_movement.total.open)} &rarr; ${fmtTotal(line_movement.total.latest)}</span></div>`,
           line_movement.note
         )
       );
