@@ -206,10 +206,13 @@
       return;
     }
     const {
-      big_home_dog, fatigue, qb_status, coach_tenure, divisional, draft_capital, referee,
+      big_home_dog, fatigue, qb_status, divisional,
       pass_defense_allowed, common_opponents, primetime, turnover_margin_note, opponent_similarity,
       line_movement, expert_consensus,
     } = signals;
+    // coach_tenure / draft_capital / referee are still returned by the
+    // Worker (see getGameSituationalSignals) but no longer rendered as
+    // cards here -- removed 2026-08-11 (Jeff's call).
 
     const cards = [];
 
@@ -257,37 +260,10 @@
       )
     );
 
-    cards.push(
-      signalCard(
-        "Road Trip",
-        "none",
-        pairRows(
-          // road_streak_entering (not including_this_game) -- this game
-          // itself would always show as "at least 1" for whichever team is
-          // away regardless of history, which reads exactly like a leaked
-          // streak even when it isn't one. Entering-streak is unambiguous:
-          // 0 always means "no streak coming in," full stop.
-          g.away_team, fatigue.away.road_streak_entering,
-          g.home_team, fatigue.home.road_streak_entering, false,
-          (v) => (v === null || v === undefined ? "-" : v === 0 ? "No streak coming in" : `${v} straight coming in`)
-        ),
-        fatigue.note
-      )
-    );
-
-    cards.push(
-      signalCard(
-        "Coming Off OT",
-        "none",
-        pairRows(
-          g.away_team, fatigue.away.coming_off_overtime === null ? null : fatigue.away.coming_off_overtime ? 1 : 0,
-          g.home_team, fatigue.home.coming_off_overtime === null ? null : fatigue.home.coming_off_overtime ? 1 : 0,
-          false,
-          (v) => (v === null || v === undefined ? "-" : v ? "Yes" : "No")
-        ),
-        fatigue.note
-      )
-    );
+    // Road Trip and Coming Off OT cards removed 2026-08-11 (Jeff's call) --
+    // fatigue.road_streak_entering / .coming_off_overtime are still computed
+    // by the Worker (fatigue.note / Rest / Timezone Crossing above still use
+    // the same fatigue object) but no longer rendered as their own cards.
 
     // The away team is always the one traveling (home team never leaves
     // its own timezone), so name them directly instead of making the
@@ -305,19 +281,7 @@
       )
     );
 
-    cards.push(
-      signalCard(
-        "Coaching Tenure",
-        "none",
-        (coach_tenure.away
-          ? `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span>${Util.escapeHtml(coach_tenure.away.coach_name)} (${coach_tenure.away.games_with_team}g)</span></div>`
-          : `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span class="text-faint">-</span></div>`) +
-          (coach_tenure.home
-            ? `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span>${Util.escapeHtml(coach_tenure.home.coach_name)} (${coach_tenure.home.games_with_team}g)</span></div>`
-            : `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span class="text-faint">-</span></div>`),
-        coach_tenure.note
-      )
-    );
+    // Coaching Tenure card removed 2026-08-11 (Jeff's call).
 
     cards.push(
       signalCard(
@@ -328,18 +292,7 @@
       )
     );
 
-    cards.push(
-      signalCard(
-        "Draft Capital (Rd 1-3, '22-'25)",
-        "inconclusive",
-        pairRows(g.away_team, draft_capital.away, g.home_team, draft_capital.home, true, (v) => (v ?? "-") + " picks"),
-        draft_capital.note
-      )
-    );
-
-    cards.push(
-      signalCard("Referee", "untested", referee.name ? Util.escapeHtml(referee.name) : "-", referee.note)
-    );
+    // Draft Capital and Referee cards removed 2026-08-11 (Jeff's call).
 
     cards.push(
       signalCard(
