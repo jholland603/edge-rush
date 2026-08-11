@@ -339,7 +339,14 @@
     // "not every game has this yet" pattern as the Model Prediction banner
     // and the weather forecast card).
     if (opponent_similarity) {
-      const fmtEdge = (v) => (v === null || v === undefined ? "-" : Util.signed(v, 3));
+      // Same convention as the model's own pass_edge/rush_edge: positive =
+      // favors home. Was a bare signed number (e.g. "+0.484") with no team
+      // attached -- reusing favoredTeamLine (same helper the spread/model
+      // prediction cards use) instead so this reads as "SEA -0.484" (SEA
+      // favored by that much) rather than requiring the sign convention to
+      // be memorized. 3 decimals since these values are much smaller than
+      // a real spread.
+      const fmtEdge = (v) => (v === null || v === undefined ? "-" : Util.favoredTeamLine(v, g.home_team, g.away_team, 3));
       const fmtEss = (v) => (v === null || v === undefined ? "-" : `${Util.num(v, 1)}/10`);
       cards.push(
         signalCard(
