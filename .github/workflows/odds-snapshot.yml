@@ -1,6 +1,6 @@
 name: Market Refresh (Odds + Model)
 
-# Two jobs on one schedule, added together deliberately (see HANDOFF.md):
+# Three jobs on one schedule, added together deliberately (see HANDOFF.md):
 #
 # 1. Snapshots live NFL moneyline/spread/total odds from The Odds API into
 #    D1's odds_snapshot table, so line movement across the week is actually
@@ -12,6 +12,10 @@ name: Market Refresh (Odds + Model)
 #    season-spanning history pull -- it now makes sense to re-score as
 #    often as the odds themselves refresh, using each run's fresh market
 #    line, rather than waiting for the once-a-week job.
+# 3. Fetches ESPN's expert straight-up pick consensus into D1's
+#    expert_consensus table (see scripts/fetch_expert_picks.py) -- also
+#    forward-looking only, added 2026-08-10. Piggybacks on this same
+#    schedule since experts revise picks through the week same as odds.
 #
 # Filename stayed odds-snapshot.yml (just the display name above changed) to
 # avoid re-creating the workflow and losing run history over a rename.
@@ -133,6 +137,19 @@ jobs:
             wrangler d1 execute edge-rush --remote --file=/tmp/odds.sql
           else
             echo "No odds rows to insert this run."
+          fi
+
+      - name: Fetch ESPN expert picks and apply to D1
+        if: steps.gamecheck.outputs.has_games == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          python3 scripts/fetch_expert_picks.py --sql-out /tmp/expert_picks.sql
+          if [ -s /tmp/expert_picks.sql ]; then
+            wrangler d1 execute edge-rush --remote --file=/tmp/expert_picks.sql
+          else
+            echo "No expert picks to insert this run (not posted yet, or none matched)."
           fi
 
       - name: Download recent team stats + injuries (rolling-10 only needs last ~1-2 seasons)

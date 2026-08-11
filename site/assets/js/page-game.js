@@ -208,6 +208,7 @@
     const {
       big_home_dog, fatigue, qb_status, coach_tenure, divisional, draft_capital, referee,
       pass_defense_allowed, common_opponents, primetime, turnover_margin_note, opponent_similarity,
+      line_movement, expert_consensus,
     } = signals;
 
     const cards = [];
@@ -404,6 +405,76 @@
           "tested_no_signal",
           `<span class="text-faint">Not scored yet for this game.</span>`,
           "Tested (backtest_v6/v7): reweighting each team's last 10 games toward opponents similar to this week's, plus recent games more heavily, was the least-bad variant tried but still short of breakeven. Populated by weekly_update.py once this game has a posted line."
+        )
+      );
+    }
+
+    // Line movement -- can't be backtested yet (odds_snapshot collection
+    // only started 2026-08-07, no graded games have movement history behind
+    // them), shown as a fact so it's on record while history accumulates,
+    // same "build the infra now, judge it later" pattern as opponent_similarity
+    // above. Values stay in odds_snapshot's own convention (negative = home
+    // favored) rather than converting to this page's spread convention --
+    // the arrow direction is flipped to match instead (mirrors games.html's
+    // oddsArrow), so "up" always means "line moved toward the home team"
+    // regardless of which raw number went up or down underneath.
+    if (line_movement) {
+      const arrow = (m, market) => {
+        if (!m || !m.moved) return "";
+        let direction = m.direction;
+        if (market === "spread") {
+          direction = direction === "up" ? "down" : direction === "down" ? "up" : direction;
+        }
+        if (direction !== "up" && direction !== "down") return "";
+        return `<span class="odds-arrow odds-arrow--${direction}" style="margin-left:4px;"></span>`;
+      };
+      const fmtLine = (v) => (v === null || v === undefined ? "-" : Util.num(v, 1));
+      cards.push(
+        signalCard(
+          "Line Movement",
+          "untested",
+          `<div class="row"><span>Spread (home, neg = favored)</span><span>${fmtLine(line_movement.spread.open)} &rarr; ${fmtLine(line_movement.spread.latest)}${arrow(line_movement.spread, "spread")}</span></div>` +
+            `<div class="row"><span>Total</span><span>${fmtLine(line_movement.total.open)} &rarr; ${fmtLine(line_movement.total.latest)}${arrow(line_movement.total, "total")}</span></div>`,
+          line_movement.note
+        )
+      );
+    } else {
+      cards.push(
+        signalCard(
+          "Line Movement",
+          "untested",
+          `<span class="text-faint">Not enough snapshots yet -- needs at least two odds pulls for this game.</span>`,
+          "Not tested, not in the model -- collection only started 2026-08-07, no graded-game history behind it yet. Shown as a fact once this game has at least two snapshot times, so it accumulates for a future backtest."
+        )
+      );
+    }
+
+    // Expert straight-up pick consensus (ESPN) -- can't be backtested even
+    // in principle (no free historical archive of past expert picks exists),
+    // shown purely as a live fact. Straight-up, not ATS -- see the note text
+    // for why no free ATS panel is used. pairHighlight here just bolds
+    // whichever side got more picks for readability, same visual language
+    // as every other two-value row on this page -- not a claim about which
+    // side is "right."
+    if (expert_consensus) {
+      const { awayCls, homeCls } = pairHighlight(expert_consensus.away_picks, expert_consensus.home_picks, true);
+      const pct = (picks) => (expert_consensus.num_experts ? `${Math.round((picks / expert_consensus.num_experts) * 100)}%` : "-");
+      cards.push(
+        signalCard(
+          "Expert Pick Consensus (ESPN, straight-up)",
+          "untested",
+          `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span class="${awayCls}">${expert_consensus.away_picks}/${expert_consensus.num_experts} (${pct(expert_consensus.away_picks)})</span></div>` +
+            `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span class="${homeCls}">${expert_consensus.home_picks}/${expert_consensus.num_experts} (${pct(expert_consensus.home_picks)})</span></div>`,
+          expert_consensus.note
+        )
+      );
+    } else {
+      cards.push(
+        signalCard(
+          "Expert Pick Consensus (ESPN, straight-up)",
+          "untested",
+          `<span class="text-faint">No picks posted yet -- ESPN's analysts usually post a few days before kickoff.</span>`,
+          "Not tested, not in the model -- straight-up picks (who wins outright), not against the spread, and there's no free historical archive of past expert picks to backtest against even in principle. Shown as a fact once posted."
         )
       );
     }

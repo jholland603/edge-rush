@@ -1253,12 +1253,33 @@ async function getModelSimilarity(DB, gameId) {
     .first();
 }
 
+// Expert straight-up pick consensus (ESPN, see scripts/fetch_expert_picks.py)
+// -- forward-looking only, same as getOddsMovement/getModelSimilarity above.
+// experts_json is a JSON-encoded array of {name, pick} stored as-is; parsed
+// here rather than at read time everywhere it's used.
+async function getExpertConsensus(DB, gameId) {
+  const row = await DB.prepare(
+    `SELECT source, num_experts, home_picks, away_picks, experts_json, snapshot_time
+     FROM expert_consensus WHERE game_id = ?`
+  )
+    .bind(gameId)
+    .first();
+  if (!row) return null;
+  let experts = [];
+  try {
+    experts = JSON.parse(row.experts_json || "[]");
+  } catch {
+    experts = [];
+  }
+  return { ...row, experts };
+}
+
 async function getGameSituationalSignals(DB, game) {
   const bigHomeDogApplies = game.spread_line !== null && game.spread_line <= -7;
 
   const [
     homeRecentGames, awayRecentGames, homeQb, awayQb, coachTenure, draftCapital, refereeName,
-    homePassDef, awayPassDef, homeCoResults, awayCoResults, similarity,
+    homePassDef, awayPassDef, homeCoResults, awayCoResults, similarity, oddsMovement, expertConsensus,
   ] = await Promise.all([
     getTeamRecentGames(DB, game.home_team, game.season, game.week),
     getTeamRecentGames(DB, game.away_team, game.season, game.week),
@@ -1272,6 +1293,8 @@ async function getGameSituationalSignals(DB, game) {
     getTeamRollingResults(DB, game.home_team, game.gameday, RECENT_GAMES_WINDOW),
     getTeamRollingResults(DB, game.away_team, game.gameday, RECENT_GAMES_WINDOW),
     getModelSimilarity(DB, game.game_id),
+    getOddsMovement(DB, [game.game_id]),
+    getExpertConsensus(DB, game.game_id),
   ]);
 
   const homeTz = TEAM_TZ_OFFSET[game.home_team];
@@ -1347,6 +1370,46 @@ async function getGameSituationalSignals(DB, game) {
           away_avg_ess: similarity.away_avg_ess,
           bandwidth_multiplier: similarity.bandwidth_multiplier,
           note: "Tested (backtest_v6_similarity_weighted.py, backtest_v7_recency_similarity.py): reweighting each team's last 10 games toward opponents similar to this week's, plus recent games more heavily (last 4 = 2x, next 3 = 1.5x, oldest 3 = 1x), was the first version of this idea to move hit rate up at all when added to the model (51.26% -> 51.33%) -- still well short of the 52.4% breakeven, not something to treat as validated, shown here as context only, never part of the model prediction above. Positive = favors home, same sign convention as the model's own pass_edge/rush_edge. Effective sample size (out of 10) shows how concentrated the weighting actually is for this matchup -- 10 would mean it's identical to a flat average.",
+        }
+      : null,
+    // Line movement -- NOT tested, and can't be yet: odds_snapshot collection
+    // only started 2026-08-07 (see .github/workflows/odds-snapshot.yml), so
+    // there's no history of graded games with snapshot data to backtest
+    // against. Built now anyway (Jeff's call) as forward-only infrastructure,
+    // same pattern as weather_forecast before it had a season behind it --
+    // this table keeps growing every run, so once enough games have both
+    // movement history AND a final score, a real backtest becomes possible.
+    // Until then this is a fact, not a signal. Median across bookmakers at
+    // the earliest vs. latest snapshot -- see getOddsMovement() for the
+    // sign-convention note (spread here is negative-home-favored, opposite
+    // game.spread_line, unlike the direction/moved flags which are already
+    // self-consistent).
+    line_movement: oddsMovement[game.game_id]
+      ? {
+          spread: oddsMovement[game.game_id].spread,
+          total: oddsMovement[game.game_id].total,
+          note: "Not tested, not in the model -- line-movement history only started being collected 2026-08-07, so there isn't a season of graded games behind this yet to backtest against. Shown as a fact (open vs. latest median line across bookmakers) so it accumulates for a future backtest once enough games have both movement data and a final score. Threshold for 'moved' is 1.0 point.",
+        }
+      : null,
+    // Expert straight-up pick consensus (ESPN, see scripts/fetch_expert_picks.py)
+    // -- can't be backtested, and never fully will be: no free source publishes
+    // a historical archive of past expert picks, and this is a live opinion
+    // captured going forward, not a stat derived from the game itself. Built
+    // 2026-08-10 (Jeff's call) after checking several other free sources
+    // (Pickwatch's real pick data is paywalled; CBS's old ATS panel and
+    // Sporting News's picks page are both gone; Yahoo now just redirects to
+    // Pickswise; Pickswise is free and ATS-focused but wasn't scriptable yet
+    // and is one outlet, not a multi-expert panel). Straight-up (who wins),
+    // not against the spread -- no free ATS *panel* exists right now.
+    expert_consensus: expertConsensus
+      ? {
+          source: expertConsensus.source,
+          num_experts: expertConsensus.num_experts,
+          home_picks: expertConsensus.home_picks,
+          away_picks: expertConsensus.away_picks,
+          experts: expertConsensus.experts,
+          snapshot_time: expertConsensus.snapshot_time,
+          note: "Not tested, not in the model -- straight-up picks (who wins outright), not against the spread, and there's no free historical archive of past expert picks to backtest against even in principle. Shown as a fact so it's on record. A lopsided lean toward the underdog is the more interesting case here; a lean toward the favorite mostly just restates what the market already says.",
         }
       : null,
   };
