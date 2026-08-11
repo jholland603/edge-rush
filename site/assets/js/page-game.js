@@ -446,6 +446,13 @@
   // just describing which team's box score is ahead, not a prediction.
   const STAT_GROUPS = [
     {
+      title: "Scoring",
+      rows: [
+        { label: "Points Scored", get: (t) => t.points_scored, higherBetter: true },
+        { label: "Points Allowed", get: (t) => t.points_allowed, higherBetter: false },
+      ],
+    },
+    {
       title: "Passing",
       rows: [
         { label: "Yards", get: (t) => t.passing_yards, higherBetter: true },

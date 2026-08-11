@@ -822,7 +822,7 @@ async function getTeamAggregate(DB, team, season, beforeWeek) {
   const weekClause = beforeWeek != null ? "AND g.week < ?" : "";
   const args = beforeWeek != null ? [team, season, beforeWeek] : [team, season];
 
-  const [offense, defense, special, misc] = await Promise.all([
+  const [offense, defense, special, misc, scoring] = await Promise.all([
     DB.prepare(
       `
       SELECT COUNT(*) games_played,
@@ -874,9 +874,24 @@ async function getTeamAggregate(DB, team, season, beforeWeek) {
     )
       .bind(...args)
       .first(),
+    // Points scored/allowed pulled straight from `game` (not a team_game_*
+    // stat table) via the same home/away CASE pattern used for the
+    // /trends "Points Scored" stat (see STAT_DEFS below) -- added 2026-08-11
+    // (Jeff's call) to Team Comparison alongside the existing box-score
+    // categories.
+    DB.prepare(
+      `
+      SELECT SUM(CASE WHEN g.home_team = tg.team THEN g.home_score ELSE g.away_score END) points_scored,
+             SUM(CASE WHEN g.home_team = tg.team THEN g.away_score ELSE g.home_score END) points_allowed
+      FROM team_game tg JOIN game g ON g.game_id = tg.game_id
+      WHERE tg.team = ? AND g.season = ? ${weekClause}
+      `
+    )
+      .bind(...args)
+      .first(),
   ]);
 
-  return { ...offense, ...defense, ...special, ...misc };
+  return { ...offense, ...defense, ...special, ...misc, ...scoring };
 }
 
 // How many of a team's most recent played games (any season, any game
@@ -907,7 +922,7 @@ async function getTeamRollingAggregate(DB, team, beforeGameday, limit) {
   `;
   const args = [team, beforeGameday, limit];
 
-  const [offense, defense, special, misc] = await Promise.all([
+  const [offense, defense, special, misc, scoring] = await Promise.all([
     DB.prepare(
       `
       SELECT COUNT(*) games_played,
@@ -955,9 +970,24 @@ async function getTeamRollingAggregate(DB, team, beforeGameday, limit) {
     )
       .bind(...args)
       .first(),
+    // Points scored/allowed -- same addition/reasoning as getTeamAggregate
+    // above, mirrored here so the "Recent" and "Full season" Team Comparison
+    // views show the same stats. Needs its own join back through team_game
+    // to game since recentClause only carries team_game_id forward.
+    DB.prepare(
+      `
+      SELECT SUM(CASE WHEN g.home_team = tg.team THEN g.home_score ELSE g.away_score END) points_scored,
+             SUM(CASE WHEN g.home_team = tg.team THEN g.away_score ELSE g.home_score END) points_allowed
+      FROM (${recentClause}) recent
+      JOIN team_game tg ON tg.team_game_id = recent.team_game_id
+      JOIN game g ON g.game_id = tg.game_id
+      `
+    )
+      .bind(...args)
+      .first(),
   ]);
 
-  return { ...offense, ...defense, ...special, ...misc };
+  return { ...offense, ...defense, ...special, ...misc, ...scoring };
 }
 
 // ---------------------------------------------------------------------------
