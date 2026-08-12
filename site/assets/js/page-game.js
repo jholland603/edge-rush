@@ -208,7 +208,7 @@
     const {
       big_home_dog, fatigue, qb_status, divisional,
       pass_defense_allowed, common_opponents, primetime, turnover_margin_note, opponent_similarity,
-      line_movement, expert_consensus,
+      line_movement, expert_consensus, notable_injured_players,
     } = signals;
     // coach_tenure / draft_capital / referee are still returned by the
     // Worker (see getGameSituationalSignals) but no longer rendered as
@@ -248,27 +248,49 @@
       )
     );
 
-    // Injury report counts -- stored in the `model` table
-    // (home_injuries_out/away_injuries_out) by weekly_update.py since
-    // earlier this session, but never had a card of its own until now.
-    // NOT restricted to "Out" status -- counts every player listed on that
-    // week's official injury report for the team (Questionable/Doubtful/Out
-    // all count), matching injury_out_players() in weekly_update.py. Was
-    // an input to the old 8-feature model (injury_edge) but dropped
-    // 2026-08-11 in favor of the cleaner pass_edge+rush_edge-only model --
-    // Jeff still wants it visible as an informational signal, so it's shown
-    // here even though it no longer affects the prediction. Comes from
-    // detail.model (the `model` table row), not the signals object, since
-    // it's scored alongside the prediction rather than computed by
-    // getGameSituationalSignals.
+    // Injury report -- home_injuries_out/away_injuries_out (from the
+    // `model` table) give the raw headcount; notable_injured_players (from
+    // signals, see getNotableInjuredPlayers in the Worker) names every
+    // player with a final Out/Doubtful status plus their trailing per-game
+    // production, so the card answers "who, and does it matter" instead of
+    // just "how many." Jeff's framing (2026-08-11): don't need to see the
+    // backup with 5 catches, do need to see the guy with 90 -- backtest_v15
+    // tried folding a value-weighted version of this into the model itself
+    // (QB/RB/WR-TE/front-seven/K, all backtested) and it never cleared
+    // breakeven, so this stays a display-only judgment call, not a pick.
     const model = detail.model;
-    if (model && model.home_injuries_out !== null && model.home_injuries_out !== undefined) {
+    const countsHtml =
+      model && model.home_injuries_out !== null && model.home_injuries_out !== undefined
+        ? pairRows(g.away_team, model.away_injuries_out, g.home_team, model.home_injuries_out, false)
+        : "";
+    function playerInjuryLine(p) {
+      const stat =
+        p.stat_label && p.stat_per_game !== null && p.stat_per_game !== undefined
+          ? ` <span class="text-faint">&mdash; ${Util.num(p.stat_per_game, 1)} ${Util.escapeHtml(p.stat_label)}</span>`
+          : "";
+      const statusCls = p.report_status === "Out" ? "text-accent" : "";
+      return (
+        `<div class="row" style="font-size:0.85rem;">` +
+        `<span>${Util.escapeHtml(p.name)} <span class="text-faint">(${Util.escapeHtml(p.position || "?")})</span></span>` +
+        `<span class="${statusCls}">${Util.escapeHtml(p.report_status)}${stat}</span>` +
+        `</div>`
+      );
+    }
+    const notable = notable_injured_players;
+    const namedListHtml = notable && (notable.home.length || notable.away.length)
+      ? `<div class="text-faint" style="font-size:0.78rem;margin-top:6px;">${Util.escapeHtml(g.away_team)}</div>` +
+        (notable.away.length ? notable.away.map(playerInjuryLine).join("") : `<span class="text-faint">None listed.</span>`) +
+        `<div class="text-faint" style="font-size:0.78rem;margin-top:6px;">${Util.escapeHtml(g.home_team)}</div>` +
+        (notable.home.length ? notable.home.map(playerInjuryLine).join("") : `<span class="text-faint">None listed.</span>`)
+      : `<div class="text-faint" style="font-size:0.78rem;margin-top:6px;">No players listed Out or Doubtful for either team yet.</div>`;
+
+    if (countsHtml || namedListHtml) {
       cards.push(
         signalCard(
           "Injury Report",
           "none",
-          pairRows(g.away_team, model.away_injuries_out, g.home_team, model.home_injuries_out, false),
-          "Count of players listed on that week's official injury report for each team (any designation -- Questionable, Doubtful, or Out -- not just players ruled out). Dropped from the model's inputs 2026-08-11 in favor of a cleaner pass_edge + rush_edge-only model, but still shown here as a fact."
+          countsHtml + namedListHtml,
+          "Counts above are every player on the report (Questionable/Doubtful/Out all count) -- dropped from the model's inputs 2026-08-11 in favor of a cleaner pass_edge+rush_edge-only model. Names below are only final Out/Doubtful, with trailing per-game production over the last 10 games attached so you can judge who actually matters. backtest_v15 tested a value-weighted version of this by position (QB/RB/WR-TE/front-seven/K) as an actual model input and it didn't clear breakeven -- shown here as a fact, not a pick."
         )
       );
     } else {
@@ -277,7 +299,7 @@
           "Injury Report",
           "none",
           `<span class="text-faint">Not scored yet for this game.</span>`,
-          "Populated by weekly_update.py once this game has a posted line and that week's injury report is available."
+          "Populated once this game has a posted line and that week's injury report is available."
         )
       );
     }

@@ -1304,12 +1304,163 @@ async function getExpertConsensus(DB, gameId) {
   return { ...row, experts };
 }
 
+// Which trailing counting stat headlines each position on the "notable
+// injured players" card -- Jeff's framing (2026-08-11): "the WR with 5
+// catches" isn't worth a look, "the WR with 100" is. backtest_v15 already
+// tried folding a value-weighted injury feature INTO the model (across QB/
+// RB/WR-TE/front-seven/K) and found nothing that cleared breakeven -- this
+// reuses the same position buckets purely for DISPLAY, not prediction, so
+// Jeff can eyeball who's actually out and judge for himself. Receptions
+// for WR/TE (his own example), rushing/passing yards for RB/QB, sacks for
+// the front seven, FG makes for kickers -- simple counting stats a fan
+// already knows how to read, not EPA. Anything not in this map (OL, DB,
+// P, LS, etc.) still shows up on the card with name/status, just without a
+// stat line -- nothing gets silently hidden.
+const INJURY_STAT_BY_POSITION = {
+  QB: { table: "player_game_offense", column: "passing_yards", label: "pass yds/g" },
+  RB: { table: "player_game_offense", column: "rushing_yards", label: "rush yds/g" },
+  FB: { table: "player_game_offense", column: "rushing_yards", label: "rush yds/g" },
+  WR: { table: "player_game_offense", column: "receptions", label: "rec/g" },
+  TE: { table: "player_game_offense", column: "receptions", label: "rec/g" },
+  DE: { table: "player_game_defense", column: "def_sacks", label: "sacks/g" },
+  DT: { table: "player_game_defense", column: "def_sacks", label: "sacks/g" },
+  NT: { table: "player_game_defense", column: "def_sacks", label: "sacks/g" },
+  DL: { table: "player_game_defense", column: "def_sacks", label: "sacks/g" },
+  LB: { table: "player_game_defense", column: "def_sacks", label: "sacks/g" },
+  ILB: { table: "player_game_defense", column: "def_sacks", label: "sacks/g" },
+  OLB: { table: "player_game_defense", column: "def_sacks", label: "sacks/g" },
+  MLB: { table: "player_game_defense", column: "def_sacks", label: "sacks/g" },
+  K: { table: "player_game_special_teams", column: "fg_made", label: "FG made/g" },
+};
+
+// Trailing per-game average of one stat column, for a specific list of
+// players, over their last `window` games strictly before `cutoff` --
+// same shape as getSkillPositionOwnAverages above but keyed to an
+// arbitrary column/table instead of a fixed fantasy-score expression, and
+// scoped to a small explicit player_id list instead of a whole position.
+async function getTrailingPerGameStat(DB, playerIds, table, column, cutoff, window) {
+  if (!playerIds.length) return {};
+  const placeholders = playerIds.map(() => "?").join(",");
+  const { results } = await DB.prepare(
+    `
+    WITH ranked AS (
+      SELECT pg.player_id, s.${column} AS val, g.gameday,
+             ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.gameday DESC) AS rn
+      FROM player_game pg
+      JOIN game g ON g.game_id = pg.game_id
+      JOIN ${table} s ON s.player_game_id = pg.player_game_id
+      WHERE pg.player_id IN (${placeholders}) AND g.gameday < ? AND g.result IS NOT NULL
+    )
+    SELECT player_id, AVG(val) AS per_game, COUNT(*) AS games_played
+    FROM ranked WHERE rn <= ?
+    GROUP BY player_id
+    `
+  )
+    .bind(...playerIds, cutoff, window)
+    .all();
+  const out = {};
+  for (const r of results) out[r.player_id] = { per_game: r.per_game, games_played: r.games_played };
+  return out;
+}
+
+// Every player on this exact game's latest injury report with a final
+// status of Out or Doubtful, for BOTH teams, with their trailing per-game
+// production attached so Jeff can judge severity himself rather than the
+// site guessing. Sorted QB first, then RB/WR/TE, then anything else with a
+// stat line, then K, then anything unmapped -- within a tier, biggest
+// trailing number first.
+async function getNotableInjuredPlayers(DB, season, week, homeTeam, awayTeam, cutoff) {
+  const window = RECENT_GAMES_WINDOW;
+  const { results: statusRows } = await DB.prepare(
+    `
+    WITH ranked AS (
+      SELECT player_id, team, report_status,
+             ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY date_modified DESC) AS rn
+      FROM injury_report
+      WHERE season = ? AND week = ? AND team IN (?, ?)
+    )
+    SELECT player_id, team, report_status FROM ranked WHERE rn = 1 AND report_status IN ('Out', 'Doubtful')
+    `
+  )
+    .bind(season, week, homeTeam, awayTeam)
+    .all();
+
+  if (!statusRows.length) return { home: [], away: [] };
+
+  const playerIds = statusRows.map((r) => r.player_id);
+  const placeholders = playerIds.map(() => "?").join(",");
+
+  const [{ results: nameRows }, { results: posRows }] = await Promise.all([
+    DB.prepare(`SELECT player_id, display_name FROM player WHERE player_id IN (${placeholders})`)
+      .bind(...playerIds)
+      .all(),
+    DB.prepare(
+      `
+      WITH pos AS (
+        SELECT pg.player_id, pg.position_code, g.gameday,
+               ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.gameday DESC) AS rn
+        FROM player_game pg JOIN game g ON g.game_id = pg.game_id
+        WHERE pg.player_id IN (${placeholders}) AND g.gameday < ? AND g.result IS NOT NULL
+      )
+      SELECT player_id, position_code FROM pos WHERE rn = 1
+      `
+    )
+      .bind(...playerIds, cutoff)
+      .all(),
+  ]);
+  const names = Object.fromEntries(nameRows.map((r) => [r.player_id, r.display_name]));
+  const positions = Object.fromEntries(posRows.map((r) => [r.player_id, r.position_code]));
+
+  // Group by (table, column) so each stat combination is queried once
+  // instead of once per player.
+  const byBucket = new Map();
+  for (const id of playerIds) {
+    const stat = INJURY_STAT_BY_POSITION[positions[id]];
+    if (!stat) continue;
+    const key = `${stat.table}:${stat.column}`;
+    if (!byBucket.has(key)) byBucket.set(key, { ...stat, ids: [] });
+    byBucket.get(key).ids.push(id);
+  }
+  const bucketList = [...byBucket.values()];
+  const statResults = await Promise.all(
+    bucketList.map((b) => getTrailingPerGameStat(DB, b.ids, b.table, b.column, cutoff, window))
+  );
+  const statByPlayer = {};
+  bucketList.forEach((b, i) => {
+    for (const id of b.ids) statByPlayer[id] = { ...statResults[i][id], label: b.label };
+  });
+
+  const players = statusRows.map((r) => {
+    const s = statByPlayer[r.player_id];
+    return {
+      player_id: r.player_id,
+      name: names[r.player_id] || "Unknown",
+      team: r.team,
+      position: positions[r.player_id] || null,
+      report_status: r.report_status,
+      stat_label: s ? s.label : null,
+      stat_per_game: s && s.per_game !== null && s.per_game !== undefined ? s.per_game : null,
+      games_played: s ? s.games_played : null,
+    };
+  });
+
+  const tier = (p) =>
+    p.position === "QB" ? 0 : ["RB", "FB", "WR", "TE"].includes(p.position) ? 1 : p.position === "K" ? 3 : p.stat_label ? 2 : 4;
+  players.sort((a, b) => tier(a) - tier(b) || (b.stat_per_game || 0) - (a.stat_per_game || 0));
+
+  return {
+    home: players.filter((p) => p.team === homeTeam),
+    away: players.filter((p) => p.team === awayTeam),
+  };
+}
+
 async function getGameSituationalSignals(DB, game) {
   const bigHomeDogApplies = game.spread_line !== null && game.spread_line <= -7;
 
   const [
     homeRecentGames, awayRecentGames, homeQb, awayQb, coachTenure, draftCapital, refereeName,
     homePassDef, awayPassDef, homeCoResults, awayCoResults, similarity, oddsMovement, expertConsensus,
+    notableInjuredPlayers,
   ] = await Promise.all([
     getTeamRecentGames(DB, game.home_team, game.season, game.week),
     getTeamRecentGames(DB, game.away_team, game.season, game.week),
@@ -1325,6 +1476,7 @@ async function getGameSituationalSignals(DB, game) {
     getModelSimilarity(DB, game.game_id),
     getOddsMovement(DB, [game.game_id]),
     getExpertConsensus(DB, game.game_id),
+    getNotableInjuredPlayers(DB, game.season, game.week, game.home_team, game.away_team, game.gameday),
   ]);
 
   const homeTz = TEAM_TZ_OFFSET[game.home_team];
@@ -1356,6 +1508,11 @@ async function getGameSituationalSignals(DB, game) {
       home: withNames(homeQb),
       away: withNames(awayQb),
       note: "Tested and real: a team starting a QB other than its established starter (mode of last 8 starts) is worth ~3.8 points, matches independent public research. The one signal here that's actually baked into the model's own prediction above.",
+    },
+    notable_injured_players: {
+      home: notableInjuredPlayers.home,
+      away: notableInjuredPlayers.away,
+      note: "Not in the model -- backtest_v15 tested a value-weighted version of this exact idea (QB/RB/WR-TE/front-seven/kicker, weighted by trailing production) added to the prediction and it didn't clear breakeven in any combination, so it stays informational only. Every player with a final 'Out' or 'Doubtful' status on this week's report, either team, with trailing per-game production attached so you can judge severity yourself -- a backup long-snapper and a 90-catch WR both show up, but the stat line tells you which one matters.",
     },
     coach_tenure: {
       home: coachTenure[game.home_team] || null,

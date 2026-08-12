@@ -1,0 +1,122 @@
+{
+  "baseline_2009_2025": {
+    "n": 2472,
+    "hit_rate": 0.5182,
+    "se": 0.01
+  },
+  "qb_value_edge": {
+    "n": 2470,
+    "hit_rate": 0.5182,
+    "se": 0.0101
+  },
+  "rb_value_edge": {
+    "n": 2474,
+    "hit_rate": 0.5178,
+    "se": 0.01
+  },
+  "wr_te_value_edge": {
+    "n": 2478,
+    "hit_rate": 0.5161,
+    "se": 0.01
+  },
+  "front7_value_edge": {
+    "n": 2471,
+    "hit_rate": 0.52,
+    "se": 0.0101
+  },
+  "kicker_value_edge": {
+    "n": 2475,
+    "hit_rate": 0.5192,
+    "se": 0.01
+  },
+  "all_five_edges": {
+    "n": 2468,
+    "hit_rate": 0.5207,
+    "se": 0.0101
+  },
+  "stud_value_edge_combined": {
+    "n": 2466,
+    "hit_rate": 0.5178,
+    "se": 0.0101
+  },
+  "best_arm_by_season": {
+    "arm": "all_five_edges",
+    "by_season": [
+      {
+        "season": 2012,
+        "games": 149,
+        "hit_rate": 0.5302
+      },
+      {
+        "season": 2013,
+        "games": 148,
+        "hit_rate": 0.4865
+      },
+      {
+        "season": 2014,
+        "games": 150,
+        "hit_rate": 0.5267
+      },
+      {
+        "season": 2015,
+        "games": 159,
+        "hit_rate": 0.5157
+      },
+      {
+        "season": 2016,
+        "games": 159,
+        "hit_rate": 0.5409
+      },
+      {
+        "season": 2017,
+        "games": 178,
+        "hit_rate": 0.4775
+      },
+      {
+        "season": 2018,
+        "games": 175,
+        "hit_rate": 0.5886
+      },
+      {
+        "season": 2019,
+        "games": 178,
+        "hit_rate": 0.5281
+      },
+      {
+        "season": 2020,
+        "games": 195,
+        "hit_rate": 0.5487
+      },
+      {
+        "season": 2021,
+        "games": 209,
+        "hit_rate": 0.5215
+      },
+      {
+        "season": 2022,
+        "games": 184,
+        "hit_rate": 0.5924
+      },
+      {
+        "season": 2023,
+        "games": 179,
+        "hit_rate": 0.4749
+      },
+      {
+        "season": 2024,
+        "games": 206,
+        "hit_rate": 0.4757
+      },
+      {
+        "season": 2025,
+        "games": 199,
+        "hit_rate": 0.4874
+      }
+    ]
+  },
+  "best_arm_2018_2025": {
+    "n": 1525,
+    "hit_rate": 0.5259,
+    "se": 0.0128
+  }
+}

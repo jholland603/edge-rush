@@ -27,6 +27,12 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
 - The market closing line already reflects aggregate expert/sharp opinion by construction — this is a supplementary signal, not a replacement for the market comparison already in the backtest.
 - If Pickswise's ATS panel becomes scriptable once the season starts, that's the natural second source to add — genuinely spread-focused, which ESPN's data isn't.
 
+## Stud-player injury value (backtest_v15, built 2026-08-11)
+- Jeff's ask: weight injured players by how much they actually produce (a 100-catch WR out is a big deal, a 5-catch WR isn't), extended beyond just QBs to RB/WR-TE/front-seven/kicker.
+- Tested as a MODEL INPUT first: `scripts/backtest_v15_stud_player_injury.py`, five position buckets (QB: passing EPA, RB: rushing EPA, WR/TE: receiving EPA, front seven: sacks/hits/TFL composite, K: fantasy points), each z-scored against its own position's population, added on top of pass_edge+rush_edge. 2009-2025 only (injury reports don't exist before 2009); baseline recomputed on the same window for a fair comparison.
+- Result: nothing cleared breakeven. Best arm (all five edges together) hit 52.07% overall / 52.59% in 2018-2025, but the by-season breakdown for that exact arm swings from 59% to 47% year to year -- noise, not a real pattern like pass_edge+rush_edge's. QB value specifically showed zero effect (51.82% vs. 51.82% baseline). Not adopted as a model input -- same conclusion backtest_v9 reached for skill positions, now confirmed for pass rush/kicker too.
+- Built as a DISPLAY feature instead: `getNotableInjuredPlayers` in the Worker lists every player with a final Out/Doubtful status on the current injury report, either team, with trailing per-game production attached (passing/rushing yards, receptions, sacks, FG makes depending on position) -- reuses the same position buckets as v15 but purely for "who's out and does it matter," not as a model input. Renders on the Injury Report card in game.html. OL/DB/etc. (no clean single counting stat) still show up by name/status, just without a stat line.
+
 ## Data gaps (documented, not fixable)
 - Moneylines/odds: 0% coverage 1999-2005 (doesn't exist in the source), scattered gaps 2006-2009, essentially complete 2010+.
 - Injuries data: only available 2009-2025, nothing before that.
