@@ -119,11 +119,24 @@
       });
   }
 
+  // Was just the edge (model - market) rendered as a team-favored line,
+  // which looks identical to a real projected spread and got read as one --
+  // e.g. "ARI -13.2" read as "model thinks Arizona wins by 13" when the
+  // model's actual projection was much closer to even and the 13.2 was the
+  // SIZE OF THE DISAGREEMENT with the market. Fixed 2026-08-11 (Jeff's
+  // call) to show the model's own projected line as the primary value, with
+  // the edge (gap from market) underneath as a labeled secondary line --
+  // same "average on top, DK detail underneath" pattern as the Line column.
   function edgeBadge(g) {
     const m = modelByGameId.get(g.game_id);
     if (!m) return `<span class="badge neutral">-</span>`;
     const cls = m.flagged ? "positive" : "neutral";
-    return `<span class="badge ${cls}">${Util.favoredTeamLine(m.edge, g.home_team, g.away_team)}</span>`;
+    const modelLine = Util.favoredTeamLine(m.model_spread, g.home_team, g.away_team);
+    const edgeLine = Util.favoredTeamLine(m.edge, g.home_team, g.away_team);
+    return (
+      `<span class="badge ${cls}">${modelLine}</span>` +
+      `<div class="dk-delta text-faint">Edge vs. market: ${edgeLine}</div>`
+    );
   }
 
   function atsBadge(g) {
@@ -334,7 +347,7 @@
             <th class="num">Line</th><th class="num">Total</th>
             <th>Signals</th><th>Stats</th>
             ${anyPlayed ? `<th class="num">Score (Away&ndash;Home)</th><th>ATS</th><th>O/U</th>` : ""}
-            <th class="num">Model Edge</th>
+            <th class="num">Model</th>
             <th>Bet</th><th class="num">Closing Line</th><th class="num">CLV</th><th>Pick Result</th>
             <th>Roof</th><th>Forecast</th>
           </tr>
