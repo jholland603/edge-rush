@@ -347,7 +347,7 @@
             <th class="num">Line</th><th class="num">Total</th>
             <th>Signals</th><th>Stats</th>
             ${anyPlayed ? `<th class="num">Score (Away&ndash;Home)</th><th>ATS</th><th>O/U</th>` : ""}
-            <th class="num">Model</th>
+            <th>Model</th>
             <th>Bet</th><th class="num">Closing Line</th><th class="num">CLV</th><th>Pick Result</th>
             <th>Roof</th><th>Forecast</th>
           </tr>
