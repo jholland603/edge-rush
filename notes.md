@@ -30,8 +30,22 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
   the title suffix) -- all passed. Could not test the live Worker fetch/cache path itself from
   this sandbox (no way to run a Workers runtime here) -- needs a real `wrangler deploy` +
   page load from Jeff to confirm end-to-end.
-- **Not yet done (needs Jeff):** `wrangler deploy` from `worker/`, then load a game page and
-  confirm headlines actually show up for both teams.
+- **Deployed and confirmed working** (2026-08-12, same day): checked the raw `/game/:gameId`
+  response directly and got 8 real, current headlines for LAC with today's date -- the
+  live fetch/cache/parse pipeline is genuinely working end to end. ARI came back empty on
+  that same check, which is expected/normal (Google's `when:1d` window is narrow and news
+  volume varies team to team day to day), not a bug.
+- **Follow-up, same session:** Jeff didn't like it buried as one more small card inside the
+  Situational Signals grid (15+ other cards) -- moved it out into its own top-level
+  `<details class="page-section">` ("Team news"), placed right after the model summary and
+  above Team Comparison so it's one of the first things on the page, not buried. Two side-by-
+  side `.card`s (away/home), reusing the same `.card`/`.card-grid` pattern `renderSummary`'s
+  stat cards already use, rather than the small `.signal-card` layout. `getTeamNewsLive()` /
+  the Worker response shape didn't change, just where and how the site renders it.
+- **Not yet done (needs Jeff):** another `wrangler deploy` from `worker/` isn't needed for
+  this follow-up (`worker/src/index.js` didn't change again) -- just re-push the site's static
+  files (`site/game.html`, `site/assets/js/page-game.js`) however that normally happens, then
+  reload a game page to confirm the new standalone section renders correctly.
 
 ## ESPN expert-picks step now non-blocking (fixed 2026-08-12)
 - Found immediately after the games.csv fix above, same verification pass: with games.csv

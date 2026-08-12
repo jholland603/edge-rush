@@ -3,6 +3,7 @@
   const subtitleEl = document.getElementById("game-subtitle");
   const summaryWrap = document.getElementById("game-summary-wrap");
   const modelWrap = document.getElementById("model-wrap");
+  const teamNewsWrap = document.getElementById("team-news-wrap");
   const signalsWrap = document.getElementById("signals-wrap");
   const compareWrap = document.getElementById("compare-table-wrap");
   const oddsWrap = document.getElementById("odds-table-wrap");
@@ -200,6 +201,49 @@
     return takeaways - giveaways;
   }
 
+  // Team News -- its own top-level page section (Jeff's call, 2026-08-12:
+  // didn't want this buried as one more small card in the Situational
+  // Signals grid alongside 15 other cards, wanted it to actually stand
+  // out). Live headlines per team, NOT the D1 team_news table -- see the
+  // Worker's getTeamNewsLive() comment for why: fetched at request time,
+  // edge-cached ~30min, so this always reflects a current search rather
+  // than last night's cron run. "No recent headlines" for a team is
+  // expected and normal, not an error -- Google News's when:1d window is
+  // narrow, and news volume genuinely varies day to day per team.
+  function newsLine(item) {
+    const sourceHtml = item.source ? ` <span class="text-faint">&mdash; ${Util.escapeHtml(item.source)}</span>` : "";
+    return (
+      `<div class="row" style="font-size:0.85rem; align-items:flex-start; padding:6px 0; border-bottom:1px solid var(--color-border);">` +
+      `<a href="${Util.escapeHtml(item.link)}" target="_blank" rel="noopener">${Util.escapeHtml(item.title)}</a>${sourceHtml}` +
+      `</div>`
+    );
+  }
+  function teamNewsList(items) {
+    return items && items.length
+      ? items.map(newsLine).join("")
+      : `<span class="text-faint">No recent headlines.</span>`;
+  }
+  function renderTeamNews(team_news, g) {
+    if (!teamNewsWrap) return;
+    if (!team_news) {
+      teamNewsWrap.innerHTML = `<div class="loading">Loading&hellip;</div>`;
+      return;
+    }
+    teamNewsWrap.innerHTML = `
+      <div class="card-grid">
+        <div class="card stat-card">
+          <div class="signal-card__title"><span>${Util.escapeHtml(g.away_team)}</span></div>
+          ${teamNewsList(team_news.away)}
+        </div>
+        <div class="card stat-card">
+          <div class="signal-card__title"><span>${Util.escapeHtml(g.home_team)}</span></div>
+          ${teamNewsList(team_news.home)}
+        </div>
+      </div>
+      <p class="text-faint" style="font-size:0.78rem;">Live via Google News RSS (roughly last 24h), edge-cached ~30 minutes -- not a stored history, just a current snapshot of what's being said about each team.</p>
+    `;
+  }
+
   function renderSignals(signals, g, detail) {
     if (!signals) {
       signalsWrap.innerHTML = "";
@@ -277,7 +321,6 @@
       );
     }
     const notable = notable_injured_players;
-    const team_news = detail.team_news;
     const namedListHtml = notable && (notable.home.length || notable.away.length)
       ? `<div class="text-faint" style="font-size:0.78rem;margin-top:6px;">${Util.escapeHtml(g.away_team)}</div>` +
         (notable.away.length ? notable.away.map(playerInjuryLine).join("") : `<span class="text-faint">None listed.</span>`) +
@@ -301,39 +344,6 @@
           "none",
           `<span class="text-faint">Not scored yet for this game.</span>`,
           "Populated once this game has a posted line and that week's injury report is available."
-        )
-      );
-    }
-
-    // Team News -- live headlines per team, NOT the D1 team_news table
-    // (see the Worker's getTeamNewsLive() comment for why: live-fetched at
-    // request time, edge-cached ~30min, so this always reflects a current
-    // search rather than last night's cron run). Purely informational,
-    // same "none" status as Rest/Timezone Crossing below -- not a claim
-    // this predicts anything.
-    function newsLine(item) {
-      const sourceHtml = item.source ? ` <span class="text-faint">&mdash; ${Util.escapeHtml(item.source)}</span>` : "";
-      return (
-        `<div class="row" style="font-size:0.85rem; align-items:flex-start;">` +
-        `<a href="${Util.escapeHtml(item.link)}" target="_blank" rel="noopener">${Util.escapeHtml(item.title)}</a>${sourceHtml}` +
-        `</div>`
-      );
-    }
-    function teamNewsList(items) {
-      return items && items.length
-        ? items.map(newsLine).join("")
-        : `<span class="text-faint">No recent headlines.</span>`;
-    }
-    if (team_news) {
-      cards.push(
-        signalCard(
-          "Team News",
-          "none",
-          `<div class="text-faint" style="font-size:0.78rem;margin-bottom:4px;">${Util.escapeHtml(g.away_team)}</div>` +
-            teamNewsList(team_news.away) +
-            `<div class="text-faint" style="font-size:0.78rem;margin-top:10px;margin-bottom:4px;">${Util.escapeHtml(g.home_team)}</div>` +
-            teamNewsList(team_news.home),
-          "Live via Google News RSS (roughly last 24h), edge-cached ~30 minutes -- not a stored history, just a current snapshot of what's being said about each team."
         )
       );
     }
@@ -787,6 +797,7 @@
     const detail = await Data.getGameDetail(gameId);
     renderSummary(detail.game, detail.team_names || {}, detail.odds_average || null);
     renderModel(detail.model, detail.game);
+    renderTeamNews(detail.team_news, detail.game);
     renderSignals(detail.signals, detail.game, detail);
     renderCompare(detail, compareView);
     renderOdds(detail.odds_history, detail.game);
