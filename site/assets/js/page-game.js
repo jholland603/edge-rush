@@ -208,8 +208,11 @@
   // Worker's getTeamNewsLive() comment for why: fetched at request time,
   // edge-cached ~30min, so this always reflects a current search rather
   // than last night's cron run. "No recent headlines" for a team is
-  // expected and normal, not an error -- Google News's when:1d window is
-  // narrow, and news volume genuinely varies day to day per team.
+  // expected and normal, not an error -- Google News's when:3d window
+  // (widened 2026-08-12 from when:1d -- a strict 24h window made this too
+  // common to be useful) still excludes stale stories, but news volume
+  // genuinely varies day to day per team, so an occasional empty side is
+  // normal, not a bug.
   function newsLine(item) {
     const sourceHtml = item.source ? ` <span class="text-faint">&mdash; ${Util.escapeHtml(item.source)}</span>` : "";
     return (
@@ -240,7 +243,7 @@
           ${teamNewsList(team_news.home)}
         </div>
       </div>
-      <p class="text-faint" style="font-size:0.78rem;">Live via Google News RSS (roughly last 24h), edge-cached ~30 minutes -- not a stored history, just a current snapshot of what's being said about each team.</p>
+      <p class="text-faint" style="font-size:0.78rem;">Live via Google News RSS (roughly last 3 days), edge-cached ~30 minutes -- not a stored history, just a current snapshot of what's being said about each team.</p>
     `;
   }
 

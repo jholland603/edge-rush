@@ -59,10 +59,15 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
   `TEAM_NEWS_EMPTY_CACHE_SECONDS` (3 min), since an empty result can't be trusted the same way
   (genuinely no news vs. this one fetch got blocked -- no way to tell from here). A transient
   failure now clears itself in a few minutes instead of looking stuck for half an hour.
-- **Not yet done (needs Jeff):** another `wrangler deploy` from `worker/` (this file did
-  change again) -- then re-check a few game pages a few minutes apart to confirm headlines show
-  up more consistently. Still possible some teams will show "No recent headlines" some of the
-  time -- that's expected now, just shouldn't stay stuck that way for long.
+- **Widened the same session, Jeff's call:** confirmed the empty state was partly just
+  `when:1d` (Google News's own ~24h window) legitimately having nothing for quieter teams --
+  not only the caching bug above. Widened to `when:3d` in `getTeamNewsLive()` -- trades a
+  little strict freshness for "usually has something to show," still excludes genuinely stale
+  stories. Site's note text under the card updated to match ("roughly last 3 days").
+- **Not yet done (needs Jeff):** another `wrangler deploy` from `worker/` (changed again) +
+  re-push the site JS note text -- then re-check a few game pages to confirm headlines show up
+  more consistently. Still possible to see "No recent headlines" occasionally -- that's
+  expected now, just shouldn't stay stuck that way for long or happen as often as before.
 
 ## ESPN expert-picks step now non-blocking (fixed 2026-08-12)
 - Found immediately after the games.csv fix above, same verification pass: with games.csv

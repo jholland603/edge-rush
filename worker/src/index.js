@@ -202,7 +202,13 @@ async function getTeamNewsLive(teamAbbr) {
   const cached = await cache.match(cacheKey);
   if (cached) return await cached.json();
 
-  const query = `"${teamName}" NFL when:1d`;
+  // when:3d, not when:1d -- widened 2026-08-12 (Jeff's call). A strict 24h
+  // window meant quieter teams legitimately had nothing to show most of
+  // the time (real, not a bug -- see the empty-cache-TTL comment above),
+  // which made "no recent headlines" too common to be useful. 3 days
+  // trades a little "how literally fresh is this" for "usually has
+  // something," while still excluding anything genuinely stale.
+  const query = `"${teamName}" NFL when:3d`;
   const rssUrl = `https://news.google.com/rss/search?${new URLSearchParams({
     q: query, hl: "en-US", gl: "US", ceid: "US:en",
   })}`;
