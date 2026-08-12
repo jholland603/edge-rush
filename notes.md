@@ -2,6 +2,19 @@
 
 Running notes so nothing gets lost between sessions. Not a deliverable, just a scratchpad.
 
+## Both workflows failing on games.csv download (fixed 2026-08-12)
+- Found while verifying the team_news job (below): `market-refresh.yml`'s "Refresh games.csv"
+  step had been failing for a couple of days, including on manual `workflow_dispatch` runs --
+  `curl: (56) Connection died, tried 5 times before giving up` against nflverse-data's GitHub
+  release CDN. Unrelated to team_news -- that step runs later in the job and never got to
+  execute since the job fails fast. Pre-existing, not introduced by this session's changes.
+- Fix: added `--retry 5 --retry-delay 5 --retry-all-errors` to every bare `curl -fsSL` pulling
+  an nflverse-data release asset in both `market-refresh.yml` (odds-snapshot.yml) and
+  `weekly-refresh.yml` -- the season-specific pulls already tolerated failure via `|| echo`,
+  but without retries a transient connection drop looked identical to "not published yet" and
+  silently skipped real data. Not yet re-verified against a real run (needs another
+  `workflow_dispatch` from Jeff) -- can't trigger GitHub Actions from this sandbox.
+
 ## Team news headlines (new `team_news` table, built 2026-08-12)
 - Jeff's ask: browse team subreddits/blogs daily for upcoming-game news, all 32 teams, into D1.
 - Reddit rejected as the actual source: old.reddit.com's public `.json` endpoints have no

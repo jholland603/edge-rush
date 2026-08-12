@@ -89,9 +89,15 @@ jobs:
           echo "Current season: $SEASON"
 
       - name: Refresh games.csv (need current upcoming-game_ids to match odds against)
+        # --retry/--retry-all-errors added 2026-08-12: this step started
+        # intermittently hitting "curl: (56) Connection died, tried 5 times
+        # before giving up" against nflverse-data's GitHub release CDN,
+        # failing the whole job before any later step (including team_news)
+        # ever ran. --retry-all-errors needs curl >= 7.71 (ubuntu-latest has
+        # a newer curl than that as of this writing).
         run: |
           mkdir -p raw
-          curl -fsSL -o raw/games.csv \
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o raw/games.csv \
             https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv
 
       - name: Check whether anything's actually coming up
@@ -179,11 +185,11 @@ jobs:
           SEASON=${{ steps.season.outputs.season }}
           mkdir -p raw/team raw/injuries
           for s in $((SEASON - 1)) "$SEASON"; do
-            curl -fsSL -o "raw/team/stats_team_week_${s}.csv" \
+            curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "raw/team/stats_team_week_${s}.csv" \
               "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_${s}.csv" \
               || echo "  team stats $s: not published/available, skipping"
           done
-          curl -fsSL -o "raw/injuries/injuries_${SEASON}.csv" \
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "raw/injuries/injuries_${SEASON}.csv" \
             "https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_${SEASON}.csv" \
             || echo "  injuries $SEASON: not published yet, skipping"
 

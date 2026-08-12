@@ -50,12 +50,20 @@ jobs:
           echo "Current season: $SEASON"
 
       - name: Download fresh nflverse CSVs
+        # --retry/--retry-all-errors added 2026-08-12: nflverse-data's
+        # GitHub release CDN has been intermittently dropping connections
+        # mid-download ("curl: (56) Connection died"), which failed
+        # market-refresh.yml's games.csv step outright (no fallback there)
+        # several days running. Added here too for the same reason even
+        # though these season-specific pulls already tolerate failure via
+        # `|| echo` -- without retries, a transient network blip looks
+        # identical to "not published yet" and silently skips real data.
         run: |
           SEASON=${{ steps.season.outputs.season }}
           mkdir -p raw/team raw/player raw/injuries
 
           echo "games.csv (all seasons, always refreshed)..."
-          curl -fsSL -o raw/games.csv \
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o raw/games.csv \
             https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv
 
           # build_incremental_sql.py only ever loads ONE season into D1 at a
@@ -65,15 +73,15 @@ jobs:
           # old EWMA model's full-history rating, which market-refresh.yml's
           # rolling-10 model doesn't need.
           echo "current-season team stats..."
-          curl -fsSL -o "raw/team/stats_team_week_${SEASON}.csv" \
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "raw/team/stats_team_week_${SEASON}.csv" \
             "https://github.com/nflverse/nflverse-data/releases/download/stats_team/stats_team_week_${SEASON}.csv" \
             || echo "  team stats $SEASON: not published yet, skipping"
 
           echo "current-season player stats + injuries..."
-          curl -fsSL -o "raw/player/stats_player_week_${SEASON}.csv" \
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "raw/player/stats_player_week_${SEASON}.csv" \
             "https://github.com/nflverse/nflverse-data/releases/download/stats_player/stats_player_week_${SEASON}.csv" \
             || echo "  player stats $SEASON: not published yet, skipping"
-          curl -fsSL -o "raw/injuries/injuries_${SEASON}.csv" \
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o "raw/injuries/injuries_${SEASON}.csv" \
             "https://github.com/nflverse/nflverse-data/releases/download/injuries/injuries_${SEASON}.csv" \
             || echo "  injuries $SEASON: not published yet, skipping"
 
