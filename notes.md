@@ -2,6 +2,55 @@
 
 Running notes so nothing gets lost between sessions. Not a deliverable, just a scratchpad.
 
+## Team news headlines (new `team_news` table, built 2026-08-12)
+- Jeff's ask: browse team subreddits/blogs daily for upcoming-game news, all 32 teams, into D1.
+- Reddit rejected as the actual source: old.reddit.com's public `.json` endpoints have no
+  free tier for scripted/automated access and are known to inconsistently 429/block
+  cloud-runner IPs over time (exactly what GitHub Actions runners are) -- a bad foundation
+  for an unattended daily job that would silently degrade. Confirmed with Jeff before building.
+- Built on **Google News RSS** instead (`news.google.com/rss/search`) -- no API key, no
+  documented rate limit at this volume (32 requests/day), structured XML
+  (title/link/source/pubDate), and it surfaces the same outlets subreddits mostly just
+  link to anyway (ESPN, beat writers, local papers, SI) with broader coverage than any
+  single subreddit.
+- **New script** `scripts/fetch_team_news.py` -- one `"<Team Name>" NFL when:1d` query per
+  team, tags each headline with `team_abbr` and (best-effort) the team's own next upcoming
+  `game_id` from `raw/games.csv`. Not attempting to parse which specific opponent a
+  headline is about from free text -- not reliably parseable, and wasn't what was asked for.
+  Verified locally against real `games.csv` with a mocked RSS response (this sandbox has no
+  general internet access and couldn't hit news.google.com directly to test for real --
+  same category of limitation as odds_snapshot/expert_picks, confirmed end-to-end only
+  works once run for real in GitHub Actions).
+- **New D1 table `team_news`** -- needs to be created live via wrangler (this sandbox has
+  no `wrangler`/Cloudflare credentials, same limitation as every other new-table addition
+  so far). Exact schema to run:
+  ```sql
+  CREATE TABLE team_news (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_abbr TEXT NOT NULL REFERENCES team(team_abbr),
+    game_id TEXT REFERENCES game(game_id),
+    headline TEXT NOT NULL,
+    link TEXT NOT NULL,
+    source TEXT,
+    published TEXT,
+    fetched TEXT NOT NULL,
+    UNIQUE(team_abbr, link)
+  );
+  ```
+  Append-only (`INSERT OR IGNORE` on the `UNIQUE(team_abbr, link)` key), same convention as
+  `odds_snapshot`/`expert_consensus` -- never updated or deleted, dedup happens at insert time.
+- **Wired into `.github/workflows/odds-snapshot.yml`** as a fourth job on the existing
+  schedule, gated to only the once-a-day morning slot (`0 12 * * *`) or a manual
+  `workflow_dispatch` -- doesn't need to run on all 16 weekly triggers like odds/picks do.
+- **Not yet done (needs Jeff, can't be done from this sandbox):**
+  1. Run the `CREATE TABLE team_news` statement above against the live `edge-rush` D1 database.
+  2. Commit + push `.github/workflows/odds-snapshot.yml` and `scripts/fetch_team_news.py`.
+  3. Trigger `workflow_dispatch` once to confirm the Google News RSS fetch actually works
+     end-to-end from a GitHub Actions runner (only verified locally against mocked RSS here).
+- No display feature built yet (no game.html/games.html card reading `team_news`) --
+  scope was just "get it into the DB," per Jeff's answer. Natural next step once there's
+  real data to look at.
+
 ## Model refinement (not yet done)
 - Isolate the QB-availability feature on its own (strip out weather/general injury count, which came back near-zero in v2) and see if it clears breakeven by itself. This is the most promising thread from the Phase 1 backtest — see `backtest/phase1_results.md`.
 
