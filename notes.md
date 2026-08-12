@@ -42,10 +42,27 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
   side `.card`s (away/home), reusing the same `.card`/`.card-grid` pattern `renderSummary`'s
   stat cards already use, rather than the small `.signal-card` layout. `getTeamNewsLive()` /
   the Worker response shape didn't change, just where and how the site renders it.
-- **Not yet done (needs Jeff):** another `wrangler deploy` from `worker/` isn't needed for
-  this follow-up (`worker/src/index.js` didn't change again) -- just re-push the site's static
-  files (`site/game.html`, `site/assets/js/page-game.js`) however that normally happens, then
-  reload a game page to confirm the new standalone section renders correctly.
+- Re-push the site's static files (`site/game.html`, `site/assets/js/page-game.js`) --
+  confirmed working, new standalone section renders correctly.
+- **Bug found right after, same session:** Jeff checked two different SEA/ARI game pages and
+  both showed "No recent headlines" for BOTH teams. Direct API checks on both game_ids
+  confirmed it -- `team_news: {away: [], home: []}` on both. Root cause: the Cache API key is
+  per-TEAM, not per-game (deliberate -- every game page for a team should share one fetch), but
+  that also means a single bad fetch (Google intermittently blocking/rate-limiting Cloudflare's
+  Worker IPs seems likely, though not confirmed -- the very first test earlier this session got
+  8 real headlines for LAC, so it's not a hard block, just inconsistent) got cached as "no news"
+  for the full 30 minutes and showed up empty on every game page for that team during that
+  window. Two different teams (SEA and ARI) both empty at once, on two different game pages, is
+  the tell -- too coincidental for both to genuinely have zero news at that exact moment.
+- **Fix:** split the cache TTL -- a real (non-empty) result still caches for the full
+  `TEAM_NEWS_CACHE_SECONDS` (30 min), but an empty result now only caches for
+  `TEAM_NEWS_EMPTY_CACHE_SECONDS` (3 min), since an empty result can't be trusted the same way
+  (genuinely no news vs. this one fetch got blocked -- no way to tell from here). A transient
+  failure now clears itself in a few minutes instead of looking stuck for half an hour.
+- **Not yet done (needs Jeff):** another `wrangler deploy` from `worker/` (this file did
+  change again) -- then re-check a few game pages a few minutes apart to confirm headlines show
+  up more consistently. Still possible some teams will show "No recent headlines" some of the
+  time -- that's expected now, just shouldn't stay stuck that way for long.
 
 ## ESPN expert-picks step now non-blocking (fixed 2026-08-12)
 - Found immediately after the games.csv fix above, same verification pass: with games.csv

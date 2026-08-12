@@ -108,7 +108,8 @@ const CORS_HEADERS = {
 // as-is (Jeff's call, in case this live approach turns out too slow and he
 // wants to fall back to reading from D1 instead) -- just no longer read by
 // this page.
-const TEAM_NEWS_CACHE_SECONDS = 1800; // 30 min
+const TEAM_NEWS_CACHE_SECONDS = 1800; // 30 min -- for a real (non-empty) result
+const TEAM_NEWS_EMPTY_CACHE_SECONDS = 180; // 3 min -- for an empty result, see getTeamNewsLive()
 const TEAM_NEWS_LIMIT = 8;
 
 // nflverse team_abbr -> full team name for the Google News search query.
@@ -187,7 +188,16 @@ async function getTeamNewsLive(teamAbbr) {
   const cache = caches.default;
   // Synthetic cache key -- doesn't need to be a real routable URL, just a
   // stable per-team key. Standard Workers Cache API pattern for caching
-  // something that isn't itself the incoming request.
+  // something that isn't itself the incoming request. Per-TEAM, not
+  // per-game -- deliberate (every game page for that team shares the same
+  // fetch), but that also means one bad fetch shows up as "no news" on
+  // EVERY game page for that team until the cache entry expires (see the
+  // empty-result TTL split below, added 2026-08-12 for exactly this
+  // reason -- caught live: ARI and SEA both came back empty on two
+  // different game pages, and there was no way to tell "Google genuinely
+  // has nothing" from "this particular fetch got blocked/rate-limited"
+  // apart from the fact that it stayed empty far longer than believable
+  // for two different teams at once).
   const cacheKey = new Request(`https://edge-rush-internal.invalid/team-news/${teamAbbr}`);
   const cached = await cache.match(cacheKey);
   if (cached) return await cached.json();
@@ -207,8 +217,16 @@ async function getTeamNewsLive(teamAbbr) {
     items = [];
   }
 
+  // Real results are trusted for the full 30 minutes. An empty result is
+  // NOT trusted the same way -- it might genuinely mean no news, or it
+  // might mean this one request got blocked/rate-limited/malformed, and
+  // there's no way to tell those apart from here. Caching it short means a
+  // transient failure clears itself in a few minutes instead of looking
+  // like a stuck "no news" for the full 30 -- on every game page for that
+  // team, since this cache is per-team not per-game.
+  const ttl = items.length > 0 ? TEAM_NEWS_CACHE_SECONDS : TEAM_NEWS_EMPTY_CACHE_SECONDS;
   const cacheResponse = new Response(JSON.stringify(items), {
-    headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${TEAM_NEWS_CACHE_SECONDS}` },
+    headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${ttl}` },
   });
   await cache.put(cacheKey, cacheResponse);
   return items;
