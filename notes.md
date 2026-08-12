@@ -2,6 +2,22 @@
 
 Running notes so nothing gets lost between sessions. Not a deliverable, just a scratchpad.
 
+## ESPN expert-picks step now non-blocking (fixed 2026-08-12)
+- Found immediately after the games.csv fix above, same verification pass: with games.csv
+  fixed, the job got one step further and died on "Fetch ESPN expert picks and apply to D1" --
+  `fetch_expert_picks.py` couldn't find `window['__espnfitt__']` in the page (its own docstring
+  already anticipated this exact failure mode -- "page structure may have changed"). Couldn't
+  confirm the actual cause (ESPN markup change vs. no picks posted yet a month before Week 1)
+  -- Chrome browser access wasn't granted this session to inspect the live page, and a plain
+  fetch of espn.com/nfl/picks came back empty (JS-heavy page, no raw source to inspect that way).
+- Rather than guess-fix a scraper I couldn't actually observe failing, added
+  `continue-on-error: true` to that step instead -- one third-party page's markup shouldn't be
+  able to kill odds/team-news/model-scoring downstream in the same job, same "log and skip,
+  don't crash" philosophy already used for unmatched games/bookmakers elsewhere in this
+  workflow. The underlying scraper issue is still open and worth a real look once someone can
+  actually see what ESPN's page is doing now (or once real 2026 picks are posted closer to
+  Week 1 and this may resolve itself if it's a too-far-out-week issue, not a markup change).
+
 ## Both workflows failing on games.csv download (fixed 2026-08-12)
 - Found while verifying the team_news job (below): `market-refresh.yml`'s "Refresh games.csv"
   step had been failing for a couple of days, including on manual `workflow_dispatch` runs --

@@ -154,6 +154,16 @@ jobs:
 
       - name: Fetch ESPN expert picks and apply to D1
         if: steps.gamecheck.outputs.has_games == 'true'
+        # continue-on-error added 2026-08-12: this step just failed hard
+        # ("Could not find window['__espnfitt__']" -- either ESPN's page
+        # markup changed, or picks simply aren't posted yet for a week this
+        # far out), which killed the whole job before odds/team-news/model
+        # steps below it ever ran. One third-party page's markup shouldn't
+        # be able to take down the rest of the pipeline -- same reasoning
+        # as the "unmatched"/"not published yet" skips already used
+        # elsewhere in this workflow. Revisit fetch_expert_picks.py's page
+        # parsing separately if this keeps failing.
+        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
