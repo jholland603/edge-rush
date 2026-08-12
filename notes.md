@@ -2,6 +2,37 @@
 
 Running notes so nothing gets lost between sessions. Not a deliverable, just a scratchpad.
 
+## Team News card on game.html -- live, not from D1 (built 2026-08-12)
+- After getting the team_news D1 table/daily job working (see below), Jeff paused before
+  building the actual display card and asked to talk through skipping D1 for the display
+  entirely -- fetch live at request time instead. Reasoning: D1 ties the card's freshness to
+  a once-a-day cron job that already proved fragile earlier this same session (curl/ESPN
+  failures upstream of it killed the whole run more than once), and he's the only user right
+  now so per-pageview live requests aren't a real traffic/rate-limit concern.
+- Decided: live fetch, cached at the Cloudflare edge (Cache API via `caches.default`, no new
+  KV/D1 binding needed) for 30 minutes. The `team_news` D1 table and its daily job are left
+  running exactly as before -- not read by this page anymore, kept as a fallback Jeff can
+  switch back to if the live approach turns out too slow, and as a running archive either way.
+- **Worker (`worker/src/index.js`)**: new `getTeamNewsLive(teamAbbr)` -- builds a
+  `"<Team Name>" NFL when:1d` Google News RSS query (same query shape as
+  `fetch_team_news.py`), fetches it directly (this Worker has no bundler/npm deps, so XML is
+  parsed with a small regex-based `parseGoogleNewsRss()` instead of a real parser -- handles
+  CDATA-wrapped titles and HTML entities, unit-tested against mocked RSS with both). Wired
+  into `getGameDetail`'s existing `Promise.all` as `team_news: { away, home }`. Never throws --
+  a failed fetch just yields an empty list for that team, same "log and skip" pattern as the
+  rest of this Worker.
+- **Site (`site/assets/js/page-game.js`)**: new "Team News" signal card, headlines as links
+  (source name shown alongside, opens in a new tab), placed right after the Injury Report
+  card. Status tag `"none"` -- purely informational, not a signal claim.
+- Verified: `node --check` on both changed files (syntax), and the RSS parsing logic
+  specifically unit-tested in isolation against mocked Google News XML (CDATA titles, an
+  HTML-entity-escaped title, and a missing `<source>` tag falling back to parsing it out of
+  the title suffix) -- all passed. Could not test the live Worker fetch/cache path itself from
+  this sandbox (no way to run a Workers runtime here) -- needs a real `wrangler deploy` +
+  page load from Jeff to confirm end-to-end.
+- **Not yet done (needs Jeff):** `wrangler deploy` from `worker/`, then load a game page and
+  confirm headlines actually show up for both teams.
+
 ## ESPN expert-picks step now non-blocking (fixed 2026-08-12)
 - Found immediately after the games.csv fix above, same verification pass: with games.csv
   fixed, the job got one step further and died on "Fetch ESPN expert picks and apply to D1" --

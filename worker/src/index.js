@@ -36,10 +36,17 @@
  *                                           getGameSituationalSignals), each team's
  *                                           season-to-date (before this game) and full-season
  *                                           stat totals, head-to-head history between the two
- *                                           teams, and `odds_history` -- every odds_snapshot
+ *                                           teams, `odds_history` -- every odds_snapshot
  *                                           row for this game, every bookmaker, unfiltered
  *                                           (the games.html summary's 1pt movement threshold
- *                                           does not apply here, see getGameDetail())
+ *                                           does not apply here, see getGameDetail()) -- and
+ *                                           `team_news` -- live Google News RSS headlines per
+ *                                           team, fetched at request time and edge-cached
+ *                                           ~30min (see getTeamNewsLive()), NOT read from D1's
+ *                                           team_news table (that table still gets written
+ *                                           daily by scripts/fetch_team_news.py, just not by
+ *                                           this route -- see the comment above
+ *                                           getTeamNewsLive() for why)
  *   /game/:gameId/players/:team         -- every player on `team` who recorded a snap of
  *                                           offense in this game (passing/rushing/receiving),
  *                                           powers the "show players" expand row on the
@@ -84,6 +91,128 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
+
+// ---------------------------------------------------------------------------
+// Team News (game.html card) -- live-fetched, NOT read from D1's team_news
+// table. Decided with Jeff 2026-08-12: that table (built earlier the same
+// day, see notes.md/HANDOFF.md) is a daily GitHub Actions snapshot into D1,
+// which means the game page would always be showing "as of last night's
+// 8am run," and ties this card's freshness to a pipeline that's already
+// proven fragile once today (curl/ESPN failures upstream of it). Jeff's
+// only user of this site for now, so per-request live fetches aren't a
+// traffic/rate-limit concern -- simpler to just call Google News RSS
+// directly from the Worker at request time. Cached at the Cloudflare edge
+// (Cache API, not D1/KV -- no new binding needed) for TEAM_NEWS_CACHE_SECONDS
+// so repeat loads of the same team within that window are instant, not a
+// second round-trip to Google. The team_news D1 table is left running
+// as-is (Jeff's call, in case this live approach turns out too slow and he
+// wants to fall back to reading from D1 instead) -- just no longer read by
+// this page.
+const TEAM_NEWS_CACHE_SECONDS = 1800; // 30 min
+const TEAM_NEWS_LIMIT = 8;
+
+// nflverse team_abbr -> full team name for the Google News search query.
+// Current 32 teams only, same scope as fetch_team_news.py's identical map
+// (this is a live, forward-looking-only feature -- no relocated/historical
+// abbreviations ever needed).
+const TEAM_ABBR_TO_NAME = {
+  ARI: "Arizona Cardinals", ATL: "Atlanta Falcons", BAL: "Baltimore Ravens",
+  BUF: "Buffalo Bills", CAR: "Carolina Panthers", CHI: "Chicago Bears",
+  CIN: "Cincinnati Bengals", CLE: "Cleveland Browns", DAL: "Dallas Cowboys",
+  DEN: "Denver Broncos", DET: "Detroit Lions", GB: "Green Bay Packers",
+  HOU: "Houston Texans", IND: "Indianapolis Colts", JAX: "Jacksonville Jaguars",
+  KC: "Kansas City Chiefs", LV: "Las Vegas Raiders", LAC: "Los Angeles Chargers",
+  LA: "Los Angeles Rams", MIA: "Miami Dolphins", MIN: "Minnesota Vikings",
+  NE: "New England Patriots", NO: "New Orleans Saints", NYG: "New York Giants",
+  NYJ: "New York Jets", PHI: "Philadelphia Eagles", PIT: "Pittsburgh Steelers",
+  SF: "San Francisco 49ers", SEA: "Seattle Seahawks", TB: "Tampa Bay Buccaneers",
+  TEN: "Tennessee Titans", WAS: "Washington Commanders",
+};
+
+function stripCdata(s) {
+  const m = s.match(/^<!\[CDATA\[([\s\S]*)\]\]>$/);
+  return m ? m[1] : s;
+}
+
+function decodeXmlEntities(s) {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&"); // must be last, or "&amp;lt;" etc. double-decode wrong
+}
+
+function xmlTagText(block, tag) {
+  const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
+  if (!m) return "";
+  return decodeXmlEntities(stripCdata(m[1]).trim());
+}
+
+// Regex-based, not a real XML parser -- this Worker is a single plain JS
+// file with no bundler/npm deps (see worker/wrangler.toml), and Google
+// News RSS's <item> shape is simple/consistent enough not to need one.
+// Same "keep it dependency-free" style as the rest of this codebase.
+function parseGoogleNewsRss(xml, limit) {
+  const items = [];
+  const itemRe = /<item>([\s\S]*?)<\/item>/g;
+  let match;
+  while (items.length < limit && (match = itemRe.exec(xml))) {
+    const block = match[1];
+    const title = xmlTagText(block, "title");
+    const link = xmlTagText(block, "link");
+    const pubDate = xmlTagText(block, "pubDate");
+    let source = xmlTagText(block, "source") || null;
+    if (!source && title.includes(" - ")) {
+      source = title.split(" - ").pop().trim();
+    }
+    if (title && link) {
+      items.push({ title, link, source, pub_date: pubDate });
+    }
+  }
+  return items;
+}
+
+// Live per-team headline fetch for game.html's Team News card. Edge-cached
+// (see header comment above) -- cache misses cost one outbound RSS fetch,
+// hits are instant. Never throws: any fetch/parse failure just yields an
+// empty list so one team's bad request doesn't break the whole game-detail
+// response, same "log and skip" philosophy used everywhere else in this
+// Worker (e.g. getNotableInjuredPlayers, getOddsMovement).
+async function getTeamNewsLive(teamAbbr) {
+  const teamName = TEAM_ABBR_TO_NAME[teamAbbr];
+  if (!teamName) return [];
+
+  const cache = caches.default;
+  // Synthetic cache key -- doesn't need to be a real routable URL, just a
+  // stable per-team key. Standard Workers Cache API pattern for caching
+  // something that isn't itself the incoming request.
+  const cacheKey = new Request(`https://edge-rush-internal.invalid/team-news/${teamAbbr}`);
+  const cached = await cache.match(cacheKey);
+  if (cached) return await cached.json();
+
+  const query = `"${teamName}" NFL when:1d`;
+  const rssUrl = `https://news.google.com/rss/search?${new URLSearchParams({
+    q: query, hl: "en-US", gl: "US", ceid: "US:en",
+  })}`;
+
+  let items = [];
+  try {
+    const resp = await fetch(rssUrl, { headers: { "User-Agent": "Mozilla/5.0 (edge-rush/1.0)" } });
+    if (resp.ok) {
+      items = parseGoogleNewsRss(await resp.text(), TEAM_NEWS_LIMIT);
+    }
+  } catch (err) {
+    items = [];
+  }
+
+  const cacheResponse = new Response(JSON.stringify(items), {
+    headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${TEAM_NEWS_CACHE_SECONDS}` },
+  });
+  await cache.put(cacheKey, cacheResponse);
+  return items;
+}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -2004,7 +2133,7 @@ async function getGameDetail(DB, gameId) {
     .first();
   if (!game) return null;
 
-  const [model, homeRecent, awayRecent, homeFull, awayFull, h2h, teamNames, signals, oddsHistory, oddsAverageMap] = await Promise.all([
+  const [model, homeRecent, awayRecent, homeFull, awayFull, h2h, teamNames, signals, oddsHistory, oddsAverageMap, awayNews, homeNews] = await Promise.all([
     DB.prepare(
       `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total,
               home_injuries_out, away_injuries_out, updated, note
@@ -2052,6 +2181,11 @@ async function getGameDetail(DB, gameId) {
       .bind(gameId)
       .all(),
     getLatestOddsAverage(DB, [gameId]),
+    // Live, not from D1 -- see the header comment above getTeamNewsLive()
+    // for why this reads Google News RSS directly instead of the
+    // team_news table scripts/fetch_team_news.py populates daily.
+    getTeamNewsLive(game.away_team),
+    getTeamNewsLive(game.home_team),
   ]);
 
   const team_names = {};
@@ -2067,6 +2201,7 @@ async function getGameDetail(DB, gameId) {
     head_to_head: h2h.results,
     odds_history: oddsHistory.results,
     odds_average: oddsAverageMap[gameId] || null,
+    team_news: { away: awayNews, home: homeNews },
     updated: new Date().toISOString(),
   };
 }
