@@ -1849,7 +1849,8 @@ async function getGameDetail(DB, gameId) {
 
   const [model, homeRecent, awayRecent, homeFull, awayFull, h2h, teamNames, signals, oddsHistory, oddsAverageMap] = await Promise.all([
     DB.prepare(
-      `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total, updated, note
+      `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total,
+              home_injuries_out, away_injuries_out, updated, note
        FROM model WHERE game_id = ?`
     )
       .bind(gameId)

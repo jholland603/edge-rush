@@ -45,7 +45,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 import backtest_v2 as bv2  # noqa: E402
 
 WINDOW = 10
-FEATURES = bv2.FEATURES  # ["pass_edge","rush_edge","rest_diff","wind","dome","qb_change_home","qb_change_away","injury_edge"]
+# Cut down to pass_edge/rush_edge only 2026-08-11 (Jeff's call): backtest_v13
+# showed pass_edge+rush_edge ALONE beat the full 8-feature model in every
+# era cut tested (full history, last 10/8/5 seasons), and adding QB change
+# back on top of just pass/rush made it slightly worse in every cut too --
+# not one good aggregate number, a consistent pattern across four different
+# windows. rest_diff/wind/dome/qb_change_home/away/injury_edge are dropped
+# as MODEL INPUTS here, but Jeff still wants them visible on the site as
+# informational signals -- weekly_update.py still computes and stores all
+# of them, they just no longer feed the prediction. See notes.md.
+FEATURES = ["pass_edge", "rush_edge"]
 
 
 def load_team_games_all_types(raw_dir: Path) -> pd.DataFrame:

@@ -248,6 +248,40 @@
       )
     );
 
+    // Injury report counts -- stored in the `model` table
+    // (home_injuries_out/away_injuries_out) by weekly_update.py since
+    // earlier this session, but never had a card of its own until now.
+    // NOT restricted to "Out" status -- counts every player listed on that
+    // week's official injury report for the team (Questionable/Doubtful/Out
+    // all count), matching injury_out_players() in weekly_update.py. Was
+    // an input to the old 8-feature model (injury_edge) but dropped
+    // 2026-08-11 in favor of the cleaner pass_edge+rush_edge-only model --
+    // Jeff still wants it visible as an informational signal, so it's shown
+    // here even though it no longer affects the prediction. Comes from
+    // detail.model (the `model` table row), not the signals object, since
+    // it's scored alongside the prediction rather than computed by
+    // getGameSituationalSignals.
+    const model = detail.model;
+    if (model && model.home_injuries_out !== null && model.home_injuries_out !== undefined) {
+      cards.push(
+        signalCard(
+          "Injury Report",
+          "none",
+          pairRows(g.away_team, model.away_injuries_out, g.home_team, model.home_injuries_out, false),
+          "Count of players listed on that week's official injury report for each team (any designation -- Questionable, Doubtful, or Out -- not just players ruled out). Dropped from the model's inputs 2026-08-11 in favor of a cleaner pass_edge + rush_edge-only model, but still shown here as a fact."
+        )
+      );
+    } else {
+      cards.push(
+        signalCard(
+          "Injury Report",
+          "none",
+          `<span class="text-faint">Not scored yet for this game.</span>`,
+          "Populated by weekly_update.py once this game has a posted line and that week's injury report is available."
+        )
+      );
+    }
+
     cards.push(
       signalCard(
         "Rest",

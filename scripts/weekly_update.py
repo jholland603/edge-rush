@@ -65,13 +65,28 @@ import pandas as pd
 
 ROLLING_WINDOW = 10
 EDGE_THRESHOLD = 2.0
+# Top N picks per week, ranked by |edge| -- replaces the old "flag anything
+# that clears the threshold" logic (2026-08-11, Jeff's call: "the goal isn't
+# to try to pick every game... best 2-4 games to bet on per week"). A game
+# still has to clear EDGE_THRESHOLD to be picked at all -- TOP_N_PER_WEEK
+# just caps how many of the threshold-clearing games actually become picks,
+# so a strong week gives up to 4, a flat week can give fewer (down to 0),
+# and it never forces a pick that isn't really there. See backtest_v14.
+TOP_N_PER_WEEK = 4
 QB_WINDOW = 8
 DISCLAIMER = (
-    "PAPER TRADING ONLY. Rolling-10 rating method (2026-08+): backtested "
-    "standalone with no ATS signal found at any window size, and no "
-    "improvement over the model's prior EWMA approach. Chosen for recency "
-    "over history anyway -- see HANDOFF.md. These numbers are logged for "
-    "tracking, not acted on."
+    "PAPER TRADING ONLY. Model is pass_edge + rush_edge ONLY as of "
+    "2026-08-11 (Jeff's call, dropping rest/wind/dome/QB-change/injury as "
+    "model inputs -- backtest_v13 showed the 2-feature version beat the "
+    "prior 8-feature model in every era cut tested: full history, last 10, "
+    "last 8, and last 5 seasons; adding QB change back on top made it "
+    "slightly worse in every one of those cuts too). Picks are now the top "
+    f"{TOP_N_PER_WEEK} games per week by |edge| that also clear the "
+    f"{EDGE_THRESHOLD}-point threshold (backtest_v14), not every game that "
+    "clears the threshold. None of this is validated to beat the closing "
+    "line -- see backtest_v11/v12/v13/v14 for the full history of what was "
+    "tried and how thin the evidence is at every step. These numbers are "
+    "logged for tracking, not acted on."
 )
 
 
@@ -359,8 +374,14 @@ def injury_out_players(raw_dir: Path, season: int, week: int) -> pd.DataFrame:
     return df[["team", "position", "full_name", "report_status"]]
 
 
-FEATURES = ["pass_edge", "rush_edge", "rest_diff", "wind", "dome",
-            "qb_change_home", "qb_change_away", "injury_edge"]
+# Model inputs -- pass_edge/rush_edge ONLY as of 2026-08-11 (must match
+# fit_model_coefficients.py's FEATURES, since that's what actually produced
+# backtest/model_coefficients.json's coefficient keys). rest_diff/wind/dome/
+# qb_change_home/away/injury_edge are still computed below (the `feat` dict
+# has all of them) and still stored/shown on the site as informational
+# signals -- they're just no longer part of the prediction itself. See the
+# DISCLAIMER above and notes.md for why.
+FEATURES = ["pass_edge", "rush_edge"]
 
 
 def load_coefficients(path: Path):
@@ -489,7 +510,7 @@ def main():
             "model_spread": round(predicted_margin, 2),
             "edge": round(model_edge, 2),
             "p_home_covers": round(p_home_covers, 4) if p_home_covers is not None else None,
-            "flagged": abs(model_edge) >= EDGE_THRESHOLD,
+            "clears_threshold": abs(model_edge) >= EDGE_THRESHOLD,
             "home_qb_established": est_starters.get(home),
             "away_qb_established": est_starters.get(away),
             "home_qb_out_flag": qb_change_home, "away_qb_out_flag": qb_change_away,
@@ -500,7 +521,19 @@ def main():
         })
 
     preds = pd.DataFrame(rows)
-    print(f"\n{preds['flagged'].sum()} of {len(preds)} games flagged (|edge| >= {EDGE_THRESHOLD})")
+
+    # Top TOP_N_PER_WEEK picks per week by |edge|, among games that clear
+    # EDGE_THRESHOLD -- see TOP_N_PER_WEEK's comment above. Ranked within
+    # (season, week) since a single run of this script can cover more than
+    # one upcoming week (e.g. next week's Sunday games already have lines
+    # posted while this week's Monday game hasn't kicked off yet).
+    preds["abs_edge"] = preds["edge"].abs()
+    preds["rank_in_week"] = preds.groupby(["season", "week"])["abs_edge"].rank(method="first", ascending=False)
+    preds["flagged"] = preds["clears_threshold"] & (preds["rank_in_week"] <= TOP_N_PER_WEEK)
+    preds = preds.drop(columns=["abs_edge", "rank_in_week", "clears_threshold"])
+
+    print(f"\n{preds['flagged'].sum()} of {len(preds)} games flagged "
+          f"(top {TOP_N_PER_WEEK}/week by |edge|, and clears {EDGE_THRESHOLD}pt threshold)")
 
     updated_at = now_iso()
 
@@ -515,16 +548,20 @@ def main():
         matchup = f"{r.away_team} @ {r.home_team}"
         model_stmts.append(
             "INSERT INTO model (season, week, game_id, matchup, market_spread, model_spread, "
-            "edge, p_home_covers, flagged, market_total, updated, note) VALUES ("
+            "edge, p_home_covers, flagged, market_total, home_injuries_out, away_injuries_out, "
+            "updated, note) VALUES ("
             f"{r.season}, {r.week}, {sql_str(r.game_id)}, {sql_str(matchup)}, "
             f"{sql_num(r.market_spread)}, {sql_num(r.model_spread)}, {sql_num(r.edge)}, "
             f"{sql_num(r.p_home_covers)}, {sql_bool(r.flagged)}, {sql_num(r.market_total)}, "
+            f"{sql_num(r.home_injuries_out)}, {sql_num(r.away_injuries_out)}, "
             f"{sql_str(updated_at)}, {sql_str(DISCLAIMER)}) "
             "ON CONFLICT(game_id) DO UPDATE SET "
             "matchup=excluded.matchup, market_spread=excluded.market_spread, "
             "model_spread=excluded.model_spread, edge=excluded.edge, "
             "p_home_covers=excluded.p_home_covers, flagged=excluded.flagged, "
-            "market_total=excluded.market_total, updated=excluded.updated, note=excluded.note;"
+            "market_total=excluded.market_total, home_injuries_out=excluded.home_injuries_out, "
+            "away_injuries_out=excluded.away_injuries_out, "
+            "updated=excluded.updated, note=excluded.note;"
         )
     print(f"\nUpserting {len(model_stmts)} predictions into D1 `model`...")
     if args.sql_out:
