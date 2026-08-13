@@ -750,9 +750,13 @@
 
   // Full per-bookmaker snapshot history -- no movement-threshold gating
   // (unlike games.html's summary arrows), since landing on this page is
-  // already an intentional look at this one game. One row per
-  // bookmaker/snapshot-time pair, oldest first (matches the Worker's
-  // ORDER BY).
+  // already an intentional look at this one game. Pivoted one row per
+  // snapshot time, one column-group per bookmaker (each book gets its own
+  // Spread/Total/Away ML/Home ML block) -- all books share a snapshot
+  // batch (the Worker scrapes them together), so this reads as "what did
+  // the market look like at time X" instead of repeating the timestamp
+  // once per book. Book columns are alphabetical; rows are oldest-first,
+  // matching the Worker's ORDER BY on the underlying history array.
   //
   // Sign-convention note (see the same note in page-games.js's oddsArrow):
   // odds_snapshot.spread_line is the HOME team's own bookmaker line,
@@ -766,30 +770,47 @@
       Util.showEmpty(oddsWrap, "No odds snapshots recorded for this game yet.");
       return;
     }
-    const rows = history
-      .map((r) => {
-        const spread = Util.favoredTeamLine(r.spread_line === null || r.spread_line === undefined ? null : -r.spread_line, g.home_team, g.away_team);
-        return `
-          <tr>
-            <td>${Util.formatDateTime(r.snapshot_time)}</td>
-            <td>${Util.escapeHtml(r.bookmaker)}</td>
-            <td class="num">${spread}</td>
-            <td class="num">${Util.num(r.total_line, 1)}</td>
-            <td class="num">${moneyline(r.away_moneyline)}</td>
-            <td class="num">${moneyline(r.home_moneyline)}</td>
-          </tr>
-        `;
+
+    const books = [...new Set(history.map((r) => r.bookmaker))].sort();
+    const snapshots = [...new Set(history.map((r) => r.snapshot_time))];
+    const cellByKey = new Map(history.map((r) => [`${r.snapshot_time} ${r.bookmaker}`, r]));
+
+    const bookHeadRow = books.map((b) => `<th class="num group-start" colspan="4">${Util.escapeHtml(b)}</th>`).join("");
+    const metricHeadRow = books
+      .map(
+        () => `
+          <th class="num group-start">Spread</th>
+          <th class="num">Total</th>
+          <th class="num">${Util.escapeHtml(g.away_team)} ML</th>
+          <th class="num">${Util.escapeHtml(g.home_team)} ML</th>
+        `
+      )
+      .join("");
+
+    const rows = snapshots
+      .map((snap) => {
+        const cells = books
+          .map((b) => {
+            const r = cellByKey.get(`${snap} ${b}`);
+            if (!r) return `<td class="num group-start">-</td><td class="num">-</td><td class="num">-</td><td class="num">-</td>`;
+            const spread = Util.favoredTeamLine(r.spread_line === null || r.spread_line === undefined ? null : -r.spread_line, g.home_team, g.away_team);
+            return `
+              <td class="num group-start">${spread}</td>
+              <td class="num">${Util.num(r.total_line, 1)}</td>
+              <td class="num">${moneyline(r.away_moneyline)}</td>
+              <td class="num">${moneyline(r.home_moneyline)}</td>
+            `;
+          })
+          .join("");
+        return `<tr><td>${Util.formatDateTime(snap)}</td>${cells}</tr>`;
       })
       .join("");
 
     oddsWrap.innerHTML = `
-      <table>
+      <table class="odds-table">
         <thead>
-          <tr>
-            <th>Snapshot</th><th>Book</th>
-            <th class="num">Spread</th><th class="num">Total</th>
-            <th class="num">${Util.escapeHtml(g.away_team)} ML</th><th class="num">${Util.escapeHtml(g.home_team)} ML</th>
-          </tr>
+          <tr><th rowspan="2">Snapshot</th>${bookHeadRow}</tr>
+          <tr>${metricHeadRow}</tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
