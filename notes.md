@@ -304,6 +304,25 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
   `site/assets/js/page-teams.js` -- all passed. Needs `wrangler deploy` (worker changed again)
   and a `git push` for the site files to go live.
 
+## Team filter on home page news card (built 2026-08-13)
+- Jeff's ask: filter the home page's "Latest news" feed down to one team.
+- Client-side only, no new Worker route -- `/news/recent` already returns up to 40 items for
+  the full 48h window in one call (see `getRecentTeamNews()`); filtering that same
+  already-fetched array by `item.team` is simpler than a second round-trip and produces an
+  identical result, since this is narrowing what's already on screen rather than asking for a
+  longer lookback on one team (that's what the teams.html news card is for -- no time limit
+  there).
+- **Site**: new `#news-team-filter` `<select>` above the news card on `index.html` (same
+  `.controls`/`.control` markup teams.html already uses). `page-home.js` now also calls
+  `Data.getIndex()` (parallel with `Data.getRecentTeamNews()`) to populate it with all 32
+  teams, sorted by full name -- deliberately not limited to teams that currently have
+  headlines, same convention as every other team dropdown on the site (picking a quiet team
+  shows "No headlines for this team," doesn't just vanish from the list). Rendering was
+  refactored into `renderNewsWrap()`/`renderNewsList()` so the filter's `change` handler can
+  re-render from the one already-fetched `allNewsItems` array without re-fetching. "Last
+  refreshed" line stays unfiltered (whole-pipeline signal, not per-team).
+- Verified: `node --check` on `page-home.js` -- passed.
+
 ## Data gaps (documented, not fixable)
 - Moneylines/odds: 0% coverage 1999-2005 (doesn't exist in the source), scattered gaps 2006-2009, essentially complete 2010+.
 - Injuries data: only available 2009-2025, nothing before that.
