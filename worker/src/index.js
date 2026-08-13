@@ -16,7 +16,13 @@
  *                                           has moved >= 1pt on either -- see
  *                                           getOddsMovement()). Powers games.html's
  *                                           direction-arrow cells.
- *   /teams/:season                      -- replaces data/teams/{season}.json
+ *   /team-news/:teamAbbr                -- single team's headlines from D1's team_news table
+                                           (see getTeamNewsFromD1()) -- powers teams.html's
+                                           news card, added 2026-08-13. Same data the
+                                           per-game card on game.html reads, just not bundled
+                                           inside a /game/:gameId response since teams.html
+                                           has no game_id to hang it off of.
+   /teams/:season                      -- replaces data/teams/{season}.json
  *   /players/season/:season             -- replaces data/players/season/{season}.json
  *   /players/career/:playerId           -- replaces data/players/career/{playerId}.json
  *   /players/career/:playerId?from=YYYY&to=YYYY
@@ -257,6 +263,14 @@ export default {
       }
 
       let m;
+      // Teams-page news card (added 2026-08-13, Jeff's ask -- "same rule as
+      // games page, last 5 plus more link") -- teams.html has no game_id to
+      // hang off getGameDetail() like the per-game card does, so this is a
+      // standalone single-team route reusing the same getTeamNewsFromD1()
+      // the game-detail endpoint already calls.
+      if ((m = path.match(/^\/team-news\/([^/]+)$/))) {
+        return json(await getTeamNewsFromD1(DB, decodeURIComponent(m[1])));
+      }
       if ((m = path.match(/^\/games\/(\d{4})$/))) {
         return json(await getGamesSeason(DB, Number(m[1])));
       }

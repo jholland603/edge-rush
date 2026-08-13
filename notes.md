@@ -282,6 +282,28 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
 - Result: nothing cleared breakeven. Best arm (all five edges together) hit 52.07% overall / 52.59% in 2018-2025, but the by-season breakdown for that exact arm swings from 59% to 47% year to year -- noise, not a real pattern like pass_edge+rush_edge's. QB value specifically showed zero effect (51.82% vs. 51.82% baseline). Not adopted as a model input -- same conclusion backtest_v9 reached for skill positions, now confirmed for pass rush/kicker too.
 - Built as a DISPLAY feature instead: `getNotableInjuredPlayers` in the Worker lists every player with a final Out/Doubtful status on the current injury report, either team, with trailing per-game production attached (passing/rushing yards, receptions, sacks, FG makes depending on position) -- reuses the same position buckets as v15 but purely for "who's out and does it matter," not as a model input. Renders on the Injury Report card in game.html. OL/DB/etc. (no clean single counting stat) still show up by name/status, just without a stat line.
 
+## Team News card on teams.html (built 2026-08-13)
+- Jeff's ask: "Let's also add a news card to the Teams page. Same rule as games page. Last 5 plus 'more' link."
+- teams.html has no `game_id` -- it's driven by `<select>` dropdowns (season, team), not a
+  per-URL param -- so it can't just read `team_news` off a `/game/:gameId` response like
+  game.html does. Added a standalone Worker route instead: `/team-news/:teamAbbr` calls the
+  existing `getTeamNewsFromD1(DB, teamAbbr)` directly (same function `getGameDetail` already
+  calls for each side of a matchup, just not bundled this time).
+- **Site**: new `#team-news-wrap` section on teams.html, between the summary cards and the
+  Weekly log table. `page-teams.js` gets its own self-contained copy of the newsLine/
+  teamNewsList/5-visible-then-"Show N more" pattern (same convention as page-game.js and
+  page-home.js's own copies -- one file per page, no shared helper module). `loadTeamNews()`
+  fires whenever the effective team selection could have changed: initial load, team-select
+  change, and season-select change (season change can silently reset which team's selected --
+  see `loadTeamsForSeason()`). Not season-scoped itself (team_news has no season column), but
+  a stale-response guard checks `teamSelect.value` still matches before rendering, in case a
+  slow request for team A resolves after team B is already selected.
+- Same daily-refresh-not-real-time caveat as the game.html card -- see `/team-news/:teamAbbr`'s
+  comment in the Worker and `getTeamNewsFromD1()`'s longer history above it.
+- Verified: `node --check` on `worker/src/index.js`, `site/assets/js/data.js`, and
+  `site/assets/js/page-teams.js` -- all passed. Needs `wrangler deploy` (worker changed again)
+  and a `git push` for the site files to go live.
+
 ## Data gaps (documented, not fixable)
 - Moneylines/odds: 0% coverage 1999-2005 (doesn't exist in the source), scattered gaps 2006-2009, essentially complete 2010+.
 - Injuries data: only available 2009-2025, nothing before that.

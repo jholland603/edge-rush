@@ -43,6 +43,12 @@ const Data = {
 
   getTeamsSeason: (season) => fetchJSON(`${API_BASE}/teams/${season}`),
 
+  // teams.html's news card -- single team's headlines, same D1 table the
+  // per-game card on game.html reads (see getTeamNewsFromD1() in the
+  // Worker). Separate route from /game/:gameId since teams.html has no
+  // game_id to piggyback on.
+  getTeamNews: (teamAbbr) => fetchJSON(`${API_BASE}/team-news/${encodeURIComponent(teamAbbr)}`),
+
   getPlayersSeason: (season) => fetchJSON(`${API_BASE}/players/season/${season}`),
 
   // `range` is optional: {from, to} (inclusive season years) restricts the

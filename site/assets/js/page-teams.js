@@ -3,6 +3,7 @@
   const teamSelect = document.getElementById("team-select");
   const summaryEl = document.getElementById("summary-cards");
   const tableWrap = document.getElementById("team-table-wrap");
+  const teamNewsWrap = document.getElementById("team-news-wrap");
 
   const params = new URLSearchParams(location.search);
   let currentSeasonData = null;
@@ -191,6 +192,79 @@
     });
   }
 
+  // Team news -- single-team version of game.html's Team News card (added
+  // 2026-08-13, Jeff's ask: "same rule as games page, last 5 plus more
+  // link"). Reads D1's team_news table via the Worker's new /team-news/:team
+  // route (getTeamNewsFromD1() directly, no game_id to bundle it under here)
+  // -- same daily-refresh-not-real-time caveat applies, see that route's
+  // comment. Kept as a self-contained copy rather than a shared helper,
+  // matching this project's one-file-per-page convention (same reasoning as
+  // page-game.js and page-home.js's own copies).
+  const TEAM_NEWS_VISIBLE = 5;
+  function newsLine(item) {
+    const sourceHtml = item.source ? ` <span class="text-faint">&mdash; ${Util.escapeHtml(item.source)}</span>` : "";
+    const dateHtml = item.pub_date
+      ? `<div class="text-faint" style="font-size:0.75rem;">${Util.escapeHtml(Util.formatDateTime(item.pub_date))}</div>`
+      : "";
+    return (
+      `<div class="row" style="font-size:0.85rem; padding:6px 0; border-bottom:1px solid var(--color-border); display:flex; flex-direction:column; gap:2px;">` +
+      `<div><a href="${Util.escapeHtml(item.link)}" target="_blank" rel="noopener">${Util.escapeHtml(item.title)}</a>${sourceHtml}</div>` +
+      dateHtml +
+      `</div>`
+    );
+  }
+  function teamNewsList(items) {
+    if (!items || !items.length) return `<span class="text-faint">No recent headlines.</span>`;
+    const visible = items.slice(0, TEAM_NEWS_VISIBLE).map(newsLine).join("");
+    const rest = items.slice(TEAM_NEWS_VISIBLE);
+    if (!rest.length) return visible;
+    return (
+      visible +
+      `<div class="team-news-more" data-expanded="false">` +
+      `<div class="team-news-more-items" style="display:none;">${rest.map(newsLine).join("")}</div>` +
+      `<button type="button" class="team-news-more-toggle" style="background:none;border:none;color:var(--color-accent);cursor:pointer;padding:6px 0 0;font-size:0.8rem;">Show ${rest.length} more</button>` +
+      `</div>`
+    );
+  }
+  if (teamNewsWrap) {
+    teamNewsWrap.addEventListener("click", (e) => {
+      const btn = e.target.closest(".team-news-more-toggle");
+      if (!btn) return;
+      const wrap = btn.closest(".team-news-more");
+      const list = wrap.querySelector(".team-news-more-items");
+      const expanded = wrap.dataset.expanded === "true";
+      list.style.display = expanded ? "none" : "";
+      wrap.dataset.expanded = expanded ? "false" : "true";
+      btn.textContent = expanded ? `Show ${list.children.length} more` : "Show less";
+    });
+  }
+  // Not season-scoped -- team_news has no season column, so switching
+  // seasons for the same team doesn't need a re-fetch. Guards against a
+  // stale response landing after a fast team switch (team A's slow request
+  // resolving after team B is already selected) by checking teamSelect.value
+  // still matches the team this fetch was for before rendering.
+  async function loadTeamNews() {
+    if (!teamNewsWrap) return;
+    const team = teamSelect.value;
+    if (!team) return;
+    teamNewsWrap.innerHTML = `<div class="loading">Loading&hellip;</div>`;
+    try {
+      const { items, last_fetched } = await Data.getTeamNews(team);
+      if (teamSelect.value !== team) return;
+      const refreshedHtml = last_fetched
+        ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatDateTime(last_fetched))}</p>`
+        : "";
+      teamNewsWrap.innerHTML = `
+        ${refreshedHtml}
+        <div class="card stat-card">${teamNewsList(items)}</div>
+        <p class="text-faint" style="font-size:0.78rem;">Refreshed daily via Google News RSS -- as of the last scheduled run, not real-time.</p>
+      `;
+    } catch (err) {
+      if (teamSelect.value !== team) return;
+      teamNewsWrap.innerHTML = `<span class="text-faint">Couldn't load news right now.</span>`;
+    }
+  }
+
   function renderPlayerBreakdown(players) {
     if (!players.length) {
       return `<p class="text-faint" style="margin:0;">No offensive player stats logged for this game.</p>`;
@@ -288,6 +362,7 @@
     try {
       await loadTeamsForSeason();
       renderTeam();
+      loadTeamNews();
       syncUrl();
     } catch (err) {
       Util.showError(tableWrap, err);
@@ -296,6 +371,7 @@
 
   teamSelect.addEventListener("change", () => {
     renderTeam();
+    loadTeamNews();
     syncUrl();
   });
 
@@ -303,6 +379,7 @@
     await loadSeasons();
     await loadTeamsForSeason();
     renderTeam();
+    loadTeamNews();
     syncUrl();
   } catch (err) {
     Util.showError(tableWrap, err);
