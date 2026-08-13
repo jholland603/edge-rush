@@ -5,7 +5,7 @@
  * Routes (all GET, JSON responses):
  *   /index                              -- replaces index.json
  *   /news/recent                        -- home page "Latest News" feed: last
- *                                           RECENT_NEWS_HOURS (24) of headlines across
+ *                                           RECENT_NEWS_HOURS (48) of headlines across
  *                                           every team, flat (not deduped/capped per
  *                                           team), newest first (see getRecentTeamNews())
  *   /games/:season                      -- replaces data/games/{season}.json
@@ -172,7 +172,7 @@ async function getTeamNewsFromD1(DB, teamAbbr) {
 // seconds. RECENT_NEWS_LIMIT is generous (40) since the site caps the
 // visible count client-side (10 + "show more", same pattern as the
 // per-game card) -- no reason to round-trip twice for more.
-const RECENT_NEWS_HOURS = 24;
+const RECENT_NEWS_HOURS = 48;
 const RECENT_NEWS_LIMIT = 40;
 
 // Returns { items, updated } -- updated is MAX(fetched) across the WHOLE
