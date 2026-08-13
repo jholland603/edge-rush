@@ -48,6 +48,20 @@ import pandas as pd
 
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds/"
 
+# Bookmaker keys (The Odds API's `bookmakers[].key`) we don't bother
+# recording -- a book that just mirrors another book's price under a
+# different name isn't an independent data point, so it'd just be dead
+# weight in odds_snapshot. Doesn't touch rows already collected (this
+# script only ever inserts, see the module docstring); it just stops new
+# ones from landing. worker/src/index.js has a matching EXCLUDED_BOOKMAKERS
+# that filters those pre-existing rows out of every query, so the two
+# lists should be kept in sync.
+#
+# lowvig: sister site of betonlineag under the same parent group,
+# explicitly marketed as "BetOnline's lines, less vig" -- confirmed not an
+# independent price. Jeff's call, 2026-08-13.
+EXCLUDED_BOOKMAKERS = {"lowvig"}
+
 # The Odds API full team name -> nflverse team_abbr. Current 32 teams only
 # (this project's game_id scheme uses nflverse's current abbreviations, e.g.
 # LV not OAK, LA not STL -- historical relocations don't matter here since
@@ -202,6 +216,7 @@ def main():
     snapshot_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     insert_stmts = []
     matched, unmatched = 0, []
+    excluded_count = 0
 
     for event in events:
         home_name = event.get("home_team")
@@ -217,6 +232,9 @@ def main():
             continue
 
         for bm in event.get("bookmakers", []):
+            if bm.get("key") in EXCLUDED_BOOKMAKERS:
+                excluded_count += 1
+                continue
             vals = extract_market_values(bm)
             home_ml = vals.get(f"_ml_{home_name}")
             away_ml = vals.get(f"_ml_{away_name}")
@@ -239,7 +257,8 @@ def main():
             )
         matched += 1
 
-    print(f"\n{matched} game(s) matched to a game_id, {len(insert_stmts)} bookmaker row(s) to insert")
+    print(f"\n{matched} game(s) matched to a game_id, {len(insert_stmts)} bookmaker row(s) to insert"
+          f" ({excluded_count} excluded-bookmaker row(s) skipped)")
     if unmatched:
         print(f"{len(unmatched)} game(s) skipped (not an error -- see below):")
         for u in unmatched:

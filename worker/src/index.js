@@ -1878,6 +1878,23 @@ function tallyStats(homeStats, awayStats) {
 // read as "the line is moving." Applies to spread and total independently.
 const ODDS_MOVEMENT_THRESHOLD = 1.0;
 
+// Bookmakers excluded from every odds_snapshot read below -- a book that
+// just mirrors another book's price under a different name isn't an
+// independent data point, so keeping it around would silently double-
+// weight that number in the cross-book median and inflate book_count with
+// a "book" that never actually moves on its own. Existing odds_snapshot
+// rows for an excluded bookmaker are NOT deleted (this project never
+// deletes odds_snapshot rows -- see fetch_odds_snapshot.py's header); this
+// list just keeps them out of every query result, here and in the
+// collector (fetch_odds_snapshot.py has its own matching EXCLUDED_
+// BOOKMAKERS so new rows stop landing in D1 in the first place).
+//
+// lowvig: sister site of betonlineag under the same parent group,
+// explicitly marketed as "BetOnline's lines, less vig" -- confirmed not
+// an independent price. Jeff's call, 2026-08-13.
+const EXCLUDED_BOOKMAKERS = ["lowvig"];
+const EXCLUDED_BOOKMAKERS_SQL = EXCLUDED_BOOKMAKERS.map((b) => `'${b}'`).join(", ");
+
 // NOTE ON SIGN CONVENTION: `odds_snapshot.spread_line` (from
 // fetch_odds_snapshot.py / The Odds API) is the HOME team's own bookmaker
 // line, standard sportsbook convention -- negative means the home team is
@@ -1916,7 +1933,7 @@ async function getOddsMovement(DB, gameIds) {
     WITH bounds AS (
       SELECT game_id, MIN(snapshot_time) AS first_time, MAX(snapshot_time) AS last_time
       FROM odds_snapshot
-      WHERE game_id IN (${placeholders})
+      WHERE game_id IN (${placeholders}) AND bookmaker NOT IN (${EXCLUDED_BOOKMAKERS_SQL})
       GROUP BY game_id
       HAVING MIN(snapshot_time) != MAX(snapshot_time)
     ),
@@ -1927,7 +1944,7 @@ async function getOddsMovement(DB, gameIds) {
              o.spread_line, o.total_line
       FROM odds_snapshot o
       JOIN bounds b ON b.game_id = o.game_id
-      WHERE o.snapshot_time IN (b.first_time, b.last_time)
+      WHERE o.snapshot_time IN (b.first_time, b.last_time) AND o.bookmaker NOT IN (${EXCLUDED_BOOKMAKERS_SQL})
     ),
     spread_ranked AS (
       SELECT game_id, bucket, spread_line,
@@ -2017,13 +2034,14 @@ async function getLatestOddsAverage(DB, gameIds) {
     WITH latest_time AS (
       SELECT game_id, MAX(snapshot_time) AS snapshot_time
       FROM odds_snapshot
-      WHERE game_id IN (${placeholders})
+      WHERE game_id IN (${placeholders}) AND bookmaker NOT IN (${EXCLUDED_BOOKMAKERS_SQL})
       GROUP BY game_id
     ),
     latest_rows AS (
       SELECT o.game_id, o.bookmaker, o.spread_line, o.total_line
       FROM odds_snapshot o
       JOIN latest_time lt ON lt.game_id = o.game_id AND lt.snapshot_time = o.snapshot_time
+      WHERE o.bookmaker NOT IN (${EXCLUDED_BOOKMAKERS_SQL})
     ),
     spread_ranked AS (
       SELECT game_id, spread_line,
@@ -2197,7 +2215,7 @@ async function getGameDetail(DB, gameId) {
              spread_line, home_spread_odds, away_spread_odds,
              total_line, over_odds, under_odds
       FROM odds_snapshot
-      WHERE game_id = ?
+      WHERE game_id = ? AND bookmaker NOT IN (${EXCLUDED_BOOKMAKERS_SQL})
       ORDER BY snapshot_time ASC, bookmaker ASC
       `
     )
