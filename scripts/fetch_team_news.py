@@ -47,6 +47,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import pandas as pd
@@ -83,6 +84,30 @@ def fetch_team_rss(team_name, timeout=20):
         return resp.read()
 
 
+def normalize_pub_date(raw):
+    """RSS pubDate is RFC 822 ('Wed, 12 Aug 2026 14:00:00 GMT') -- not
+    safely sortable as plain text in SQL (starts with weekday, not year).
+    Convert to ISO 8601 UTC ('2026-08-12T14:00:00Z') so `team_news.published`
+    can be sorted with a plain ORDER BY. Falls back to the raw string on any
+    parse failure -- added 2026-08-12 after Jeff asked how the game page's
+    Team News card was sorted, and the honest answer was "insertion order,
+    not actual article date, because the stored format wasn't sortable."
+    Pre-existing rows inserted before this change keep their raw RFC 822
+    string (INSERT OR IGNORE never updates existing rows) -- the Worker's
+    ORDER BY published DESC falls back to `id DESC` as a tiebreaker/fallback
+    for exactly that reason, see getTeamNewsFromD1() in worker/src/index.js.
+    """
+    if not raw:
+        return raw
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError):
+        return raw
+
+
 def parse_rss_items(xml_bytes, limit):
     """Google News RSS item shape:
     <item>
@@ -99,7 +124,7 @@ def parse_rss_items(xml_bytes, limit):
     for item in root.findall("./channel/item")[:limit]:
         title = (item.findtext("title") or "").strip()
         link = (item.findtext("link") or "").strip()
-        pub_date = (item.findtext("pubDate") or "").strip()
+        pub_date = normalize_pub_date((item.findtext("pubDate") or "").strip())
         source_el = item.find("source")
         source = source_el.text.strip() if source_el is not None and source_el.text else None
         if not source and " - " in title:

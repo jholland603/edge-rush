@@ -89,6 +89,52 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
   since earlier this session, so this should just work without depending on Google tolerating
   the request at page-load time anymore.
 
+## Team news pre-kickoff refresh added (2026-08-12, same session)
+- Jeff's ask: refresh team news right before each kickoff window too, not just once a day --
+  roughly 8pm Thu, 12/3/8pm Sun, 8pm Mon.
+- Rather than add a second, slightly-offset set of cron entries just for this, reused the
+  pre-kickoff triggers `odds-snapshot.yml` already fires for odds/model (~1hr before kickoff:
+  7pm ET Thu/Mon, 12/3/7pm ET Sun -- 1 hour off from Jeff's stated times, close enough to the
+  same intent that a second near-duplicate schedule wasn't worth the complexity). Broadened
+  the team-news step's `if` condition to also match those three existing cron strings (`0 23
+  * * 4`, `0 16,19,23 * * 0`, `0 23 * * 1`) alongside the daily morning slot. Verified the YAML
+  still parses and the multi-line `if:` folds into one valid boolean expression (`python3 -c
+  "import yaml; yaml.safe_load(...)"`, then printed the step's parsed `if` to confirm).
+  Team news now runs 12x/week (was 7x/week): the 7 daily mornings plus Thu/Mon (1 each) and
+  Sunday's 3-kickoff-window entry (fires 3x from one cron line).
+- **Not yet done (needs Jeff):** same `wrangler deploy` + push as above (this was a workflow-
+  only change, `worker/src/index.js` untouched by this addition specifically, but still
+  bundled with the not-yet-deployed team-news-source-switch above) -- next Thu/Sun/Mon game
+  day will be the first real test of the pre-kickoff timing.
+
+## Team news: real date sort + collapse to 5 (2026-08-12, same session)
+- Jeff asked how the card was sorted. Honest answer at the time: `ORDER BY id DESC` --
+  insertion order, not the article's own published date -- because `team_news.published` was
+  stored as Google's raw RFC 822 pubDate string ("Wed, 12 Aug 2026 14:00:00 GMT"), which isn't
+  safely sortable as text in SQL (starts with weekday, not year).
+- **Fixed:** `scripts/fetch_team_news.py` now has `normalize_pub_date()` -- parses the RFC 822
+  string with `email.utils.parsedate_to_datetime` and stores ISO 8601 UTC instead
+  ("2026-08-12T14:00:00Z", sorts correctly with a plain string comparison). Falls back to the
+  raw string on any parse failure rather than dropping the value. Verified against real
+  examples ("Wed, 12 Aug 2026 14:00:00 GMT" -> "2026-08-12T14:00:00Z") and a garbage-input
+  fallback case, both by hand in this session.
+- Worker's `getTeamNewsFromD1()` now sorts `ORDER BY published DESC, id DESC` (was `id DESC`
+  alone) -- `id DESC` stays as a tiebreaker/fallback since rows inserted before this fix still
+  hold the old RFC 822 string (INSERT OR IGNORE never rewrites existing rows) and would sort
+  unpredictably mixed in with the new ISO-format ones.
+- **Recommended to Jeff (not yet confirmed done):** run `DELETE FROM team_news;` once via
+  wrangler after deploying, so every remaining row is consistently ISO-formatted -- the
+  existing rows are all from today's testing/preseason period anyway, zero value to keep, and
+  clearing them avoids the mixed-format sort edge case entirely rather than just tolerating it.
+- **Also added:** site now shows only the top 5 headlines per team by default, with a
+  "Show N more" toggle revealing the rest (still capped at TEAM_NEWS_LIMIT=8 from the Worker).
+  Implemented as a delegated click listener on `teamNewsWrap` (survives `renderTeamNews()`
+  re-running on every page load, since it's set up once rather than re-attached per render).
+- **Not yet done (needs Jeff):** `wrangler deploy` (worker changed -- new ORDER BY),
+  `git push` (site + script both changed), then clear the table as above, then either wait for
+  the next scheduled run or trigger `workflow_dispatch` once to repopulate with clean,
+  properly-sortable data.
+
 ## ESPN expert-picks step now non-blocking (fixed 2026-08-12)
 - Found immediately after the games.csv fix above, same verification pass: with games.csv
   fixed, the job got one step further and died on "Fetch ESPN expert picks and apply to D1" --

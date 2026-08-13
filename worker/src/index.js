@@ -113,9 +113,23 @@ const CORS_HEADERS = {
 // real-time, in exchange for headlines that actually show up.
 const TEAM_NEWS_LIMIT = 8;
 
+// Sorted by the article's own published date (newest first), not insertion
+// order -- added 2026-08-12 after Jeff asked how this was actually sorted.
+// It used to be `ORDER BY id DESC` (most-recently-inserted first) because
+// `published` was stored as Google's raw RFC 822 string
+// ("Wed, 12 Aug 2026...") which isn't safely sortable as text (starts with
+// weekday, not year). fetch_team_news.py now normalizes it to ISO 8601
+// UTC at fetch time (see normalize_pub_date() there), which sorts
+// correctly with a plain string ORDER BY. `id DESC` stays as a tiebreaker
+// (same published timestamp) and a fallback for any pre-existing rows
+// still holding the old RFC 822 format (INSERT OR IGNORE never rewrites
+// existing rows, so old ones don't get backfilled automatically) --
+// recommended Jeff clear the table once after this ships so every row is
+// consistently formatted; this tiebreaker just guards against whatever
+// old-format rows exist in the meantime sorting strangely.
 async function getTeamNewsFromD1(DB, teamAbbr) {
   const { results } = await DB.prepare(
-    `SELECT headline, link, source, published FROM team_news WHERE team_abbr = ? ORDER BY id DESC LIMIT ?`
+    `SELECT headline, link, source, published FROM team_news WHERE team_abbr = ? ORDER BY published DESC, id DESC LIMIT ?`
   )
     .bind(teamAbbr, TEAM_NEWS_LIMIT)
     .all();

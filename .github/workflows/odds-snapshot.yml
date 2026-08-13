@@ -16,13 +16,14 @@ name: Market Refresh (Odds + Model)
 #    expert_consensus table (see scripts/fetch_expert_picks.py) -- also
 #    forward-looking only, added 2026-08-10. Piggybacks on this same
 #    schedule since experts revise picks through the week same as odds.
-# 4. Fetches daily team news headlines (Google News RSS, one query per
-#    team) into D1's team_news table (see scripts/fetch_team_news.py) --
-#    added 2026-08-12, Jeff's ask for upcoming-game news coverage per team.
-#    Runs only on the once-a-day morning slot (gated below), not every one
-#    of this workflow's 16 weekly triggers -- news doesn't need to refresh
-#    on every odds/kickoff check, and Google News RSS has no documented
-#    rate-limit tolerance worth testing needlessly.
+# 4. Fetches team news headlines (Google News RSS, one query per team) into
+#    D1's team_news table (see scripts/fetch_team_news.py) -- added
+#    2026-08-12, Jeff's ask for upcoming-game news coverage per team. Runs
+#    on the once-a-day morning slot PLUS every pre-kickoff slot (Thu/Sun/
+#    Mon, ~1hr before kickoff -- same slots the odds/model steps already
+#    use), gated below -- not every one of this workflow's 16 weekly
+#    triggers, since news doesn't need the Tue/Wed/Fri/Sat evening
+#    non-game-day refresh too.
 #
 # Filename stayed odds-snapshot.yml (just the display name above changed) to
 # avoid re-creating the workflow and losing run history over a rename.
@@ -176,9 +177,22 @@ jobs:
           fi
 
       - name: Fetch team news headlines and apply to D1
-        # Only on the once-a-day morning slot (0 12 * * *) or a manual run --
-        # see job header comment for why this doesn't need every trigger.
-        if: github.event.schedule == '0 12 * * *' || github.event_name == 'workflow_dispatch'
+        # Daily morning slot (0 12 * * *) PLUS every pre-kickoff slot this
+        # workflow already fires for odds/model (Thu/Sun/Mon, ~1hr before
+        # kickoff -- added 2026-08-12, Jeff's ask for a refresh right before
+        # each game window, not just once a day). Reuses the exact cron
+        # entries already defined above instead of adding new ones at a
+        # slightly different time (his ask was ~8pm Thu/Sun/Mon; these fire
+        # ~7pm ET, matching the same "1hr before kickoff" logic the odds
+        # fetch already uses) -- one schedule to reason about instead of two
+        # slightly-offset ones. Still skipped on the Tue/Wed/Fri/Sat evening
+        # slot and every other daily morning-only reasoning from before.
+        if: >
+          github.event.schedule == '0 12 * * *' ||
+          github.event.schedule == '0 23 * * 4' ||
+          github.event.schedule == '0 16,19,23 * * 0' ||
+          github.event.schedule == '0 23 * * 1' ||
+          github.event_name == 'workflow_dispatch'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

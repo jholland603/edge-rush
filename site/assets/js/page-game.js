@@ -222,10 +222,37 @@
       `</div>`
     );
   }
+  // Show the first 5, collapse the rest behind a "Show N more" toggle
+  // (Jeff's call, 2026-08-12) -- backend still returns up to
+  // TEAM_NEWS_LIMIT (8, see the Worker), this just controls how many are
+  // visible by default. Delegated click listener (below, set up once) so
+  // it keeps working after renderTeamNews() replaces teamNewsWrap's
+  // innerHTML on every page load/refresh.
+  const TEAM_NEWS_VISIBLE = 5;
   function teamNewsList(items) {
-    return items && items.length
-      ? items.map(newsLine).join("")
-      : `<span class="text-faint">No recent headlines.</span>`;
+    if (!items || !items.length) return `<span class="text-faint">No recent headlines.</span>`;
+    const visible = items.slice(0, TEAM_NEWS_VISIBLE).map(newsLine).join("");
+    const rest = items.slice(TEAM_NEWS_VISIBLE);
+    if (!rest.length) return visible;
+    return (
+      visible +
+      `<div class="team-news-more" data-expanded="false">` +
+      `<div class="team-news-more-items" style="display:none;">${rest.map(newsLine).join("")}</div>` +
+      `<button type="button" class="team-news-more-toggle" style="background:none;border:none;color:var(--color-accent);cursor:pointer;padding:6px 0 0;font-size:0.8rem;">Show ${rest.length} more</button>` +
+      `</div>`
+    );
+  }
+  if (teamNewsWrap) {
+    teamNewsWrap.addEventListener("click", (e) => {
+      const btn = e.target.closest(".team-news-more-toggle");
+      if (!btn) return;
+      const wrap = btn.closest(".team-news-more");
+      const list = wrap.querySelector(".team-news-more-items");
+      const expanded = wrap.dataset.expanded === "true";
+      list.style.display = expanded ? "none" : "";
+      wrap.dataset.expanded = expanded ? "false" : "true";
+      btn.textContent = expanded ? `Show ${list.children.length} more` : "Show less";
+    });
   }
   function renderTeamNews(team_news, g) {
     if (!teamNewsWrap) return;
