@@ -323,6 +323,55 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
   refreshed" line stays unfiltered (whole-pipeline signal, not per-team).
 - Verified: `node --check` on `page-home.js` -- passed.
 
+## Bug: team filter showing no Cowboys news despite real, recent headlines (found/fixed 2026-08-13)
+- Jeff noticed the new home page team filter showed nothing for Dallas, even though game.html
+  and teams.html both showed real Cowboys headlines from today.
+- Root cause confirmed by hitting the live API directly: `/team-news/DAL` had 8 real headlines,
+  all from today (00:57-12:28 UTC), well inside the 48h window. But `/news/recent` (the feed the
+  home page's filter draws from) had zero DAL items -- because a burst of near-simultaneous "how
+  to watch X vs Y" preview articles across ~30+ OTHER teams, all published in the single hour
+  right before kickoff (13:03-13:57 UTC), completely filled the old `RECENT_NEWS_LIMIT` (40)
+  cap on its own. Dallas's genuinely-recent headlines just lost the ORDER BY published DESC ...
+  LIMIT 40 race and got truncated out at the query level, before the client-side team filter
+  ever saw them. Not a bug in the filter itself, or in Dallas's data.
+  - This didn't matter before today (2026-08-13) because nothing had ever asked
+    `/news/recent` to represent every team's coverage -- the unfiltered home page view only
+    ever displayed the newest 10 anyway, so a truncated-but-still-plenty-large pool of 40 was
+    invisible. It became a real bug the moment the per-team filter shipped, since filtering
+    can only narrow what's already in the fetched list -- a team truncated out at the query
+    level can never come back.
+- Fix: raised `RECENT_NEWS_LIMIT` from 40 to 300 in the Worker (`getRecentTeamNews()`) --
+  comfortably covers the realistic ceiling (32 teams x several headlines each within 2 days,
+  even during a heavy pre-kickoff week) without being unbounded. The home page's default
+  "All teams" view is unaffected (still 10 visible + "show more", client-side), this only
+  changes how much the team filter has to work with.
+- Verified: `node --check` on `worker/src/index.js` and `page-home.js` -- passed. Needs
+  `wrangler deploy` to take effect.
+
+## Filtering out "how to watch" / live-stream listicles (built 2026-08-13)
+- Jeff's ask right after the DAL truncation bug above -- the flood of near-identical
+  "X vs Y Live Stream: How to Watch" articles (one per outlet, posted under BOTH teams in the
+  game) was exactly what caused that bug, and they're not real news anyway (no injury/roster/
+  game info, just a watch-it-here listicle).
+- Filtered at fetch time, not just hidden client-side: `scripts/fetch_team_news.py` now has
+  `is_low_value_headline(title)`, matching `"how to watch"`, `"live stream"`, `"how to stream"`
+  case-insensitively against the title. Applied inside `parse_rss_items()` before the
+  per-team `--limit-per-team` cap, so junk headlines can no longer crowd out real ones within
+  a single team's per-run allotment either -- previously the cap was applied to the raw item
+  list first via slicing, so a bad day could genuinely fill a team's 15-headline cap with nothing
+  but watch-it-here listicles.
+- Deliberately narrow patterns -- didn't touch "Prediction, Pick, Odds" or similar (that's real
+  analysis content, not boilerplate), just the specific pattern Jeff flagged.
+- Forward-only: this stops NEW junk from being inserted, doesn't retroactively remove what's
+  already in `team_news` from before today. Jeff can optionally run a one-time cleanup:
+  `wrangler d1 execute edge-rush --remote --command "DELETE FROM team_news WHERE headline LIKE '%how to watch%' OR headline LIKE '%live stream%' OR headline LIKE '%how to stream%';"`
+  (SQLite's LIKE is case-insensitive for ASCII by default, so this catches the same rows the
+  Python filter would have).
+- Verified: `python3 -m py_compile` plus a standalone test of `is_low_value_headline()` against
+  5 real titles pulled from the live API earlier today (2 "how to watch" titles correctly
+  filtered, 3 real headlines including a "Prediction, Pick, Odds" one correctly kept) -- all
+  passed.
+
 ## Data gaps (documented, not fixable)
 - Moneylines/odds: 0% coverage 1999-2005 (doesn't exist in the source), scattered gaps 2006-2009, essentially complete 2010+.
 - Injuries data: only available 2009-2025, nothing before that.

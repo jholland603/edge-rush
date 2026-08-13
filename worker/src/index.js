@@ -169,11 +169,27 @@ async function getTeamNewsFromD1(DB, teamAbbr) {
 // to exactly match the format normalize_pub_date() stores, avoiding a
 // string-comparison edge case where a millisecond-bearing cutoff could
 // sort as "earlier" than a same-instant row that has no fractional
-// seconds. RECENT_NEWS_LIMIT is generous (40) since the site caps the
-// visible count client-side (10 + "show more", same pattern as the
-// per-game card) -- no reason to round-trip twice for more.
+// seconds.
+//
+// RECENT_NEWS_LIMIT was 40 originally (site caps visible count client-side
+// at 10 + "show more" anyway, so no reason to round-trip for more) --
+// raised to 300 on 2026-08-13 after finding a real bug it caused: a burst
+// of near-simultaneous "how to watch" preview articles across many teams
+// (e.g. every pre-kickoff refresh right before a game) can fill the entire
+// top-40-by-recency cap on its own, silently pushing OTHER teams' genuinely
+// recent (still within RECENT_NEWS_HOURS) headlines out of the result
+// entirely -- confirmed directly: /team-news/DAL had 8 real headlines from
+// today, all within the 48h window, but none of them were in /news/recent's
+// top 40 because ~40 other teams' preview articles from the last hour alone
+// outranked them by raw recency. This only bit once the home page got a
+// per-team filter (2026-08-13): filtering only narrows whatever's already
+// in the fetched list, so a team truncated out at the query level can never
+// come back no matter what the filter does. 300 comfortably covers the
+// realistic ceiling (32 teams x up to TEAM_NEWS_LIMIT-ish headlines each
+// within 2 days, even during a heavy pre-kickoff week) without being
+// unbounded.
 const RECENT_NEWS_HOURS = 48;
-const RECENT_NEWS_LIMIT = 40;
+const RECENT_NEWS_LIMIT = 300;
 
 // Returns { items, updated } -- updated is MAX(fetched) across the WHOLE
 // table (not just the 24h window items reflects), added 2026-08-13 for the

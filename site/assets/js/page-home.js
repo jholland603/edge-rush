@@ -7,7 +7,7 @@
   // 48h (widened 2026-08-13 from the original 24h -- 24h was going empty
   // too often on quiet news days), added 2026-08-12 (Jeff's ask). Backend
   // (/news/recent, see the Worker's getRecentTeamNews()) returns up to
-  // 40, newest first; this
+  // 300, newest first; this
   // shows the first 10 with a "Show N more" toggle for the rest, same
   // collapse pattern as game.html's per-team Team News card
   // (site/assets/js/page-game.js's teamNewsList()) -- kept as a
@@ -15,7 +15,7 @@
   // this project's existing one-file-per-page convention.
   //
   // Team filter (added 2026-08-13, Jeff's ask) -- client-side only, no new
-  // Worker route. /news/recent already returns up to RECENT_NEWS_LIMIT (40)
+  // Worker route. /news/recent already returns up to RECENT_NEWS_LIMIT (300)
   // items for the full 48h window in one call; filtering that same
   // already-fetched list by team is simpler than round-tripping again and
   // gives identical results, since the dropdown is just narrowing what's

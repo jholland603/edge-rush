@@ -108,6 +108,27 @@ def normalize_pub_date(raw):
         return raw
 
 
+
+# Low-value boilerplate that Google News RSS surfaces heavily right before
+# kickoff -- "how to watch"/"live stream" listicles, one nearly-identical
+# copy per outlet, for BOTH teams in a game. Jeff's ask (2026-08-13) after
+# noticing these were crowding out real coverage: a single pre-kickoff
+# refresh can post the same "X vs Y Live Stream: How to Watch" story under
+# both teams' headlines, and with enough games kicking off in the same
+# window that flood alone is big enough to matter (it's literally what
+# caused the /news/recent LIMIT-40 truncation bug the same day -- see
+# notes.md and getRecentTeamNews()'s comment in the Worker). None of these
+# carry actual news value (no injury/roster/game info), so they're dropped
+# at fetch time rather than just hidden client-side, which also means they
+# never occupy a `team_news` row or count against any downstream LIMIT.
+LOW_VALUE_TITLE_PATTERNS = ("how to watch", "live stream", "how to stream")
+
+
+def is_low_value_headline(title):
+    lowered = title.lower()
+    return any(p in lowered for p in LOW_VALUE_TITLE_PATTERNS)
+
+
 def parse_rss_items(xml_bytes, limit):
     """Google News RSS item shape:
     <item>
@@ -118,10 +139,16 @@ def parse_rss_items(xml_bytes, limit):
     </item>
     Title is "Headline - Publisher" by convention; source tag is the more
     reliable publisher name when present, title suffix is the fallback.
+    "How to watch"/"live stream" listicles are filtered out here (see
+    is_low_value_headline()) -- excluded before the `limit` cap is applied
+    so they can't crowd out real headlines within a team's per-run cap
+    either.
     """
     root = ET.fromstring(xml_bytes)
     items = []
-    for item in root.findall("./channel/item")[:limit]:
+    for item in root.findall("./channel/item"):
+        if len(items) >= limit:
+            break
         title = (item.findtext("title") or "").strip()
         link = (item.findtext("link") or "").strip()
         pub_date = normalize_pub_date((item.findtext("pubDate") or "").strip())
@@ -130,6 +157,8 @@ def parse_rss_items(xml_bytes, limit):
         if not source and " - " in title:
             source = title.rsplit(" - ", 1)[-1].strip()
         if not title or not link:
+            continue
+        if is_low_value_headline(title):
             continue
         items.append({"title": title, "link": link, "source": source, "pub_date": pub_date})
     return items
