@@ -152,6 +152,28 @@ const Util = {
     });
   },
 
+  /**
+   * "Today @ 10:00 AM" / "Yesterday @ 10:00 AM" for the last two calendar
+   * days, otherwise falls back to formatDateTime's full date -- added
+   * 2026-08-13 for the "Last refreshed" indicators (team news cards on
+   * game.html/teams.html/home page), Jeff's ask: those get checked several
+   * times a day so the exact date is less useful at a glance than "was this
+   * today." Day boundary is local calendar day (midnight-to-midnight in the
+   * viewer's own timezone), not a rolling 24h window -- "Yesterday" should
+   * mean yesterday, not "22-26 hours ago."
+   */
+  formatRelativeDateTime(isoStr) {
+    if (!isoStr) return "-";
+    const d = new Date(isoStr);
+    if (Number.isNaN(d.getTime())) return isoStr;
+    const startOfDay = (dt) => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+    const diffDays = Math.round((startOfDay(new Date()) - startOfDay(d)) / 86400000);
+    const timeStr = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    if (diffDays === 0) return `Today @ ${timeStr}`;
+    if (diffDays === 1) return `Yesterday @ ${timeStr}`;
+    return Util.formatDateTime(isoStr);
+  },
+
   debounce(fn, wait = 200) {
     let t;
     return (...args) => {

@@ -252,7 +252,7 @@
       const { items, last_fetched } = await Data.getTeamNews(team);
       if (teamSelect.value !== team) return;
       const refreshedHtml = last_fetched
-        ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatDateTime(last_fetched))}</p>`
+        ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatRelativeDateTime(last_fetched))}</p>`
         : "";
       teamNewsWrap.innerHTML = `
         ${refreshedHtml}

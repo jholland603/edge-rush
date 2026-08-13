@@ -45,7 +45,7 @@
         // there's nothing in the last 24h so an empty feed still reads as
         // "checked recently, genuinely quiet" rather than "broken."
         const refreshedHtml = updated
-          ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatDateTime(updated))}</p>`
+          ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatRelativeDateTime(updated))}</p>`
           : "";
         if (!items || !items.length) {
           newsWrap.innerHTML = `${refreshedHtml}<p class="text-faint">No headlines in the last 24 hours.</p>`;

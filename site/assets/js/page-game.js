@@ -278,7 +278,7 @@
     // quiet team with nothing new wouldn't move this on its own, see
     // getTeamNewsFromD1()'s comment for the full caveat).
     const refreshedHtml = team_news.updated
-      ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatDateTime(team_news.updated))}</p>`
+      ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatRelativeDateTime(team_news.updated))}</p>`
       : "";
     teamNewsWrap.innerHTML = `
       ${refreshedHtml}
