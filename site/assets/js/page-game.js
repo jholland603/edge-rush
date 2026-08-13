@@ -204,15 +204,16 @@
   // Team News -- its own top-level page section (Jeff's call, 2026-08-12:
   // didn't want this buried as one more small card in the Situational
   // Signals grid alongside 15 other cards, wanted it to actually stand
-  // out). Live headlines per team, NOT the D1 team_news table -- see the
-  // Worker's getTeamNewsLive() comment for why: fetched at request time,
-  // edge-cached ~30min, so this always reflects a current search rather
-  // than last night's cron run. "No recent headlines" for a team is
-  // expected and normal, not an error -- Google News's when:3d window
-  // (widened 2026-08-12 from when:1d -- a strict 24h window made this too
-  // common to be useful) still excludes stale stories, but news volume
-  // genuinely varies day to day per team, so an occasional empty side is
-  // normal, not a bug.
+  // out). Reads D1's team_news table (populated daily by
+  // scripts/fetch_team_news.py via GitHub Actions) -- was briefly a live
+  // per-request fetch straight from the Worker instead, reverted the same
+  // day after confirming Google News blocks Cloudflare Workers' IP range
+  // as automated traffic (HTTP 503, "your computer or network may be
+  // sending automated queries") -- see the Worker's getTeamNewsFromD1()
+  // comment for the full story. So "latest" here means as of the last
+  // daily run, not real-time. "No recent headlines" for a team is still
+  // expected sometimes, not an error -- not every team gets daily press
+  // coverage.
   function newsLine(item) {
     const sourceHtml = item.source ? ` <span class="text-faint">&mdash; ${Util.escapeHtml(item.source)}</span>` : "";
     return (
@@ -243,7 +244,7 @@
           ${teamNewsList(team_news.home)}
         </div>
       </div>
-      <p class="text-faint" style="font-size:0.78rem;">Live via Google News RSS (roughly last 3 days), edge-cached ~30 minutes -- not a stored history, just a current snapshot of what's being said about each team.</p>
+      <p class="text-faint" style="font-size:0.78rem;">Refreshed daily via Google News RSS -- as of the last scheduled run, not real-time.</p>
     `;
   }
 

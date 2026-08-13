@@ -40,13 +40,13 @@
  *                                           row for this game, every bookmaker, unfiltered
  *                                           (the games.html summary's 1pt movement threshold
  *                                           does not apply here, see getGameDetail()) -- and
- *                                           `team_news` -- live Google News RSS headlines per
- *                                           team, fetched at request time and edge-cached
- *                                           ~30min (see getTeamNewsLive()), NOT read from D1's
- *                                           team_news table (that table still gets written
- *                                           daily by scripts/fetch_team_news.py, just not by
- *                                           this route -- see the comment above
- *                                           getTeamNewsLive() for why)
+ *                                           `team_news` -- top headlines per team from D1's
+ *                                           team_news table (see getTeamNewsFromD1()), which
+ *                                           scripts/fetch_team_news.py populates daily via
+ *                                           GitHub Actions -- was briefly a live per-request
+ *                                           fetch instead, reverted after Google News started
+ *                                           503ing Cloudflare Workers' IP range as automated
+ *                                           traffic (see the comment above getTeamNewsFromD1())
  *   /game/:gameId/players/:team         -- every player on `team` who recorded a snap of
  *                                           offense in this game (passing/rushing/receiving),
  *                                           powers the "show players" expand row on the
@@ -93,187 +93,33 @@ const CORS_HEADERS = {
 };
 
 // ---------------------------------------------------------------------------
-// Team News (game.html card) -- live-fetched, NOT read from D1's team_news
-// table. Decided with Jeff 2026-08-12: that table (built earlier the same
-// day, see notes.md/HANDOFF.md) is a daily GitHub Actions snapshot into D1,
-// which means the game page would always be showing "as of last night's
-// 8am run," and ties this card's freshness to a pipeline that's already
-// proven fragile once today (curl/ESPN failures upstream of it). Jeff's
-// only user of this site for now, so per-request live fetches aren't a
-// traffic/rate-limit concern -- simpler to just call Google News RSS
-// directly from the Worker at request time. Cached at the Cloudflare edge
-// (Cache API, not D1/KV -- no new binding needed) for TEAM_NEWS_CACHE_SECONDS
-// so repeat loads of the same team within that window are instant, not a
-// second round-trip to Google. The team_news D1 table is left running
-// as-is (Jeff's call, in case this live approach turns out too slow and he
-// wants to fall back to reading from D1 instead) -- just no longer read by
-// this page.
-const TEAM_NEWS_CACHE_SECONDS = 1800; // 30 min -- for a real (non-empty) result
-const TEAM_NEWS_EMPTY_CACHE_SECONDS = 180; // 3 min -- for an empty result, see getTeamNewsLive()
+// Team News (game.html card) -- reads D1's team_news table, populated daily
+// by scripts/fetch_team_news.py via GitHub Actions (see .github/workflows/
+// odds-snapshot.yml and notes.md).
+//
+// This was originally built as a LIVE fetch straight from this Worker
+// (Jeff's call, 2026-08-12 -- avoid the daily-cron staleness this table
+// implies). Reverted the same day after actually testing it: Google
+// News blocks Cloudflare Workers' shared IP range as automated traffic
+// ("Sorry... your computer or network may be sending automated queries",
+// HTTP 503) -- confirmed directly via a temporary /debug/team-news/:team
+// route hitting the RSS endpoint with cache bypassed. Not transient, not
+// fixable with retries/wider date windows/better caching -- it's Google's
+// bot-detection flagging Workers' IP pool specifically. The daily
+// GitHub-Actions-based fetch doesn't hit this (different, evidently
+// untainted IP range, and far fewer requests -- 32/day vs. once per page
+// load), which is exactly why it's the reliable path and live-from-Worker
+// isn't. Tradeoff accepted: "as of the last daily run" instead of
+// real-time, in exchange for headlines that actually show up.
 const TEAM_NEWS_LIMIT = 8;
 
-// nflverse team_abbr -> full team name for the Google News search query.
-// Current 32 teams only, same scope as fetch_team_news.py's identical map
-// (this is a live, forward-looking-only feature -- no relocated/historical
-// abbreviations ever needed).
-const TEAM_ABBR_TO_NAME = {
-  ARI: "Arizona Cardinals", ATL: "Atlanta Falcons", BAL: "Baltimore Ravens",
-  BUF: "Buffalo Bills", CAR: "Carolina Panthers", CHI: "Chicago Bears",
-  CIN: "Cincinnati Bengals", CLE: "Cleveland Browns", DAL: "Dallas Cowboys",
-  DEN: "Denver Broncos", DET: "Detroit Lions", GB: "Green Bay Packers",
-  HOU: "Houston Texans", IND: "Indianapolis Colts", JAX: "Jacksonville Jaguars",
-  KC: "Kansas City Chiefs", LV: "Las Vegas Raiders", LAC: "Los Angeles Chargers",
-  LA: "Los Angeles Rams", MIA: "Miami Dolphins", MIN: "Minnesota Vikings",
-  NE: "New England Patriots", NO: "New Orleans Saints", NYG: "New York Giants",
-  NYJ: "New York Jets", PHI: "Philadelphia Eagles", PIT: "Pittsburgh Steelers",
-  SF: "San Francisco 49ers", SEA: "Seattle Seahawks", TB: "Tampa Bay Buccaneers",
-  TEN: "Tennessee Titans", WAS: "Washington Commanders",
-};
-
-function stripCdata(s) {
-  const m = s.match(/^<!\[CDATA\[([\s\S]*)\]\]>$/);
-  return m ? m[1] : s;
-}
-
-function decodeXmlEntities(s) {
-  return s
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, "&"); // must be last, or "&amp;lt;" etc. double-decode wrong
-}
-
-function xmlTagText(block, tag) {
-  const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
-  if (!m) return "";
-  return decodeXmlEntities(stripCdata(m[1]).trim());
-}
-
-// Regex-based, not a real XML parser -- this Worker is a single plain JS
-// file with no bundler/npm deps (see worker/wrangler.toml), and Google
-// News RSS's <item> shape is simple/consistent enough not to need one.
-// Same "keep it dependency-free" style as the rest of this codebase.
-function parseGoogleNewsRss(xml, limit) {
-  const items = [];
-  const itemRe = /<item>([\s\S]*?)<\/item>/g;
-  let match;
-  while (items.length < limit && (match = itemRe.exec(xml))) {
-    const block = match[1];
-    const title = xmlTagText(block, "title");
-    const link = xmlTagText(block, "link");
-    const pubDate = xmlTagText(block, "pubDate");
-    let source = xmlTagText(block, "source") || null;
-    if (!source && title.includes(" - ")) {
-      source = title.split(" - ").pop().trim();
-    }
-    if (title && link) {
-      items.push({ title, link, source, pub_date: pubDate });
-    }
-  }
-  return items;
-}
-
-// Temporary diagnostic route (/debug/team-news/:teamAbbr) -- added
-// 2026-08-12 because SEA and ARI stayed empty across a much wider when:3d
-// window over an extended period, which stopped looking like normal news-
-// volume variance and started looking like a real fetch failure. No way
-// to see the Worker's runtime logs from outside (needs `wrangler tail`),
-// so this bypasses the cache entirely and reports back the raw HTTP
-// status + a snippet of whatever Google actually sent, instead of
-// silently swallowing it into an empty array the way getTeamNewsLive()
-// does for the real game.html path. Safe to leave in (read-only, no
-// secrets involved, hits a public RSS feed) but fine to remove once this
-// is diagnosed.
-async function debugTeamNewsFetch(teamAbbr) {
-  const teamName = TEAM_ABBR_TO_NAME[teamAbbr];
-  if (!teamName) return { error: `unknown team ${teamAbbr}` };
-
-  const query = `"${teamName}" NFL when:3d`;
-  const rssUrl = `https://news.google.com/rss/search?${new URLSearchParams({
-    q: query, hl: "en-US", gl: "US", ceid: "US:en",
-  })}`;
-
-  try {
-    const resp = await fetch(rssUrl, { headers: { "User-Agent": "Mozilla/5.0 (edge-rush/1.0)" } });
-    const text = await resp.text();
-    return {
-      team: teamAbbr,
-      query,
-      rss_url: rssUrl,
-      status: resp.status,
-      ok: resp.ok,
-      response_length: text.length,
-      response_snippet: text.slice(0, 800),
-      parsed_items: parseGoogleNewsRss(text, TEAM_NEWS_LIMIT),
-    };
-  } catch (err) {
-    return { team: teamAbbr, query, rss_url: rssUrl, error: String((err && err.message) || err) };
-  }
-}
-
-// Live per-team headline fetch for game.html's Team News card. Edge-cached
-// (see header comment above) -- cache misses cost one outbound RSS fetch,
-// hits are instant. Never throws: any fetch/parse failure just yields an
-// empty list so one team's bad request doesn't break the whole game-detail
-// response, same "log and skip" philosophy used everywhere else in this
-// Worker (e.g. getNotableInjuredPlayers, getOddsMovement).
-async function getTeamNewsLive(teamAbbr) {
-  const teamName = TEAM_ABBR_TO_NAME[teamAbbr];
-  if (!teamName) return [];
-
-  const cache = caches.default;
-  // Synthetic cache key -- doesn't need to be a real routable URL, just a
-  // stable per-team key. Standard Workers Cache API pattern for caching
-  // something that isn't itself the incoming request. Per-TEAM, not
-  // per-game -- deliberate (every game page for that team shares the same
-  // fetch), but that also means one bad fetch shows up as "no news" on
-  // EVERY game page for that team until the cache entry expires (see the
-  // empty-result TTL split below, added 2026-08-12 for exactly this
-  // reason -- caught live: ARI and SEA both came back empty on two
-  // different game pages, and there was no way to tell "Google genuinely
-  // has nothing" from "this particular fetch got blocked/rate-limited"
-  // apart from the fact that it stayed empty far longer than believable
-  // for two different teams at once).
-  const cacheKey = new Request(`https://edge-rush-internal.invalid/team-news/${teamAbbr}`);
-  const cached = await cache.match(cacheKey);
-  if (cached) return await cached.json();
-
-  // when:3d, not when:1d -- widened 2026-08-12 (Jeff's call). A strict 24h
-  // window meant quieter teams legitimately had nothing to show most of
-  // the time (real, not a bug -- see the empty-cache-TTL comment above),
-  // which made "no recent headlines" too common to be useful. 3 days
-  // trades a little "how literally fresh is this" for "usually has
-  // something," while still excluding anything genuinely stale.
-  const query = `"${teamName}" NFL when:3d`;
-  const rssUrl = `https://news.google.com/rss/search?${new URLSearchParams({
-    q: query, hl: "en-US", gl: "US", ceid: "US:en",
-  })}`;
-
-  let items = [];
-  try {
-    const resp = await fetch(rssUrl, { headers: { "User-Agent": "Mozilla/5.0 (edge-rush/1.0)" } });
-    if (resp.ok) {
-      items = parseGoogleNewsRss(await resp.text(), TEAM_NEWS_LIMIT);
-    }
-  } catch (err) {
-    items = [];
-  }
-
-  // Real results are trusted for the full 30 minutes. An empty result is
-  // NOT trusted the same way -- it might genuinely mean no news, or it
-  // might mean this one request got blocked/rate-limited/malformed, and
-  // there's no way to tell those apart from here. Caching it short means a
-  // transient failure clears itself in a few minutes instead of looking
-  // like a stuck "no news" for the full 30 -- on every game page for that
-  // team, since this cache is per-team not per-game.
-  const ttl = items.length > 0 ? TEAM_NEWS_CACHE_SECONDS : TEAM_NEWS_EMPTY_CACHE_SECONDS;
-  const cacheResponse = new Response(JSON.stringify(items), {
-    headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${ttl}` },
-  });
-  await cache.put(cacheKey, cacheResponse);
-  return items;
+async function getTeamNewsFromD1(DB, teamAbbr) {
+  const { results } = await DB.prepare(
+    `SELECT headline, link, source, published FROM team_news WHERE team_abbr = ? ORDER BY id DESC LIMIT ?`
+  )
+    .bind(teamAbbr, TEAM_NEWS_LIMIT)
+    .all();
+  return results.map((r) => ({ title: r.headline, link: r.link, source: r.source, pub_date: r.published }));
 }
 
 function json(data, status = 200) {
@@ -435,10 +281,6 @@ export default {
         const result = await getFantasyRankings(DB, Number(m[1]), Number(m[2]), position, limit);
         if (result === null) return notFound(`no schedule for ${m[1]} week ${m[2]}`);
         return json(result);
-      }
-
-      if ((m = path.match(/^\/debug\/team-news\/([^/]+)$/))) {
-        return json(await debugTeamNewsFetch(decodeURIComponent(m[1]).toUpperCase()));
       }
 
       return notFound();
@@ -2247,11 +2089,10 @@ async function getGameDetail(DB, gameId) {
       .bind(gameId)
       .all(),
     getLatestOddsAverage(DB, [gameId]),
-    // Live, not from D1 -- see the header comment above getTeamNewsLive()
-    // for why this reads Google News RSS directly instead of the
-    // team_news table scripts/fetch_team_news.py populates daily.
-    getTeamNewsLive(game.away_team),
-    getTeamNewsLive(game.home_team),
+    // From D1's team_news table (daily cron), not live -- see the header
+    // comment above getTeamNewsFromD1() for why.
+    getTeamNewsFromD1(DB, game.away_team),
+    getTeamNewsFromD1(DB, game.home_team),
   ]);
 
   const team_names = {};

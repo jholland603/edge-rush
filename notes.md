@@ -64,10 +64,30 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
   not only the caching bug above. Widened to `when:3d` in `getTeamNewsLive()` -- trades a
   little strict freshness for "usually has something to show," still excludes genuinely stale
   stories. Site's note text under the card updated to match ("roughly last 3 days").
-- **Not yet done (needs Jeff):** another `wrangler deploy` from `worker/` (changed again) +
-  re-push the site JS note text -- then re-check a few game pages to confirm headlines show up
-  more consistently. Still possible to see "No recent headlines" occasionally -- that's
-  expected now, just shouldn't stay stuck that way for long or happen as often as before.
+- **Root cause found, same session:** added a temporary `/debug/team-news/:team` route
+  (bypassed cache, returned raw HTTP status + response snippet). Hit it for ARI: HTTP 503,
+  body was Google's actual bot-block page ("Sorry... but your computer or network may be
+  sending automated queries"). Confirmed: Google is blocking Cloudflare Workers' shared IP
+  range as automated traffic. Not transient, not fixable with retries/wider windows/better
+  caching -- structural. The one early LAC success was luck before/between blocks, not the norm.
+- **Reverted to D1, same session (Jeff's call once the real cause was clear):** the daily
+  GitHub-Actions-based fetch (`scripts/fetch_team_news.py`) doesn't hit this wall -- different
+  IP pool, far fewer requests (32/day vs. once per page load). Switched `getGameDetail` back
+  to reading `team_news` from D1 (`getTeamNewsFromD1()`), same shape as before
+  (`{away: [...], home: [...]}`, mapped `headline`->`title` so the site JS didn't need to
+  change beyond copy). Deleted all the now-dead live-fetch machinery: `getTeamNewsLive()`,
+  `parseGoogleNewsRss()` + its XML helpers, `TEAM_ABBR_TO_NAME`, the Cache-API TTL constants,
+  and the temporary debug route -- confirmed via grep nothing still references them.
+  Net result: this ended up exactly where the very first version (before Jeff asked to try
+  live-without-D1) already was, just now with hard evidence for why D1 is the right call
+  instead of an assumption either way.
+- **Site note text updated** to say "Refreshed daily via Google News RSS -- as of the last
+  scheduled run, not real-time" instead of the live/edge-cached framing.
+- **Not yet done (needs Jeff):** `wrangler deploy` from `worker/` (changed again -- this is
+  the real, final version) + push the site JS. Then confirm headlines actually show up now --
+  they're reading straight from the `team_news` table that's already been populated daily
+  since earlier this session, so this should just work without depending on Google tolerating
+  the request at page-load time anymore.
 
 ## ESPN expert-picks step now non-blocking (fixed 2026-08-12)
 - Found immediately after the games.csv fix above, same verification pass: with games.csv
