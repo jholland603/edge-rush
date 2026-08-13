@@ -29,7 +29,7 @@ async function fetchJSON(path) {
 const Data = {
   getIndex: () => fetchJSON(`${API_BASE}/index`),
 
-  // Home page "Latest News" feed -- last 24h of headlines across every
+  // Home page "Latest News" feed -- last 48h of headlines across every
   // team, flat, newest first. See getRecentTeamNews() in the Worker.
   getRecentTeamNews: () => fetchJSON(`${API_BASE}/news/recent`),
 

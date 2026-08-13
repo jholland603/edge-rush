@@ -3,8 +3,10 @@
   const newsWrap = document.getElementById("latest-news-wrap");
 
   // Latest News -- home page feed of headlines across every team, last
-  // 24h, added 2026-08-12 (Jeff's ask). Backend (/news/recent, see the
-  // Worker's getRecentTeamNews()) returns up to 40, newest first; this
+  // 48h (widened 2026-08-13 from the original 24h -- 24h was going empty
+  // too often on quiet news days), added 2026-08-12 (Jeff's ask). Backend
+  // (/news/recent, see the Worker's getRecentTeamNews()) returns up to
+  // 40, newest first; this
   // shows the first 10 with a "Show N more" toggle for the rest, same
   // collapse pattern as game.html's per-team Team News card
   // (site/assets/js/page-game.js's teamNewsList()) -- kept as a
@@ -42,13 +44,13 @@
       .then(({ items, updated }) => {
         // "Last refreshed" -- MAX(fetched) across the whole team_news
         // table (see getRecentTeamNews() in the Worker), shown even when
-        // there's nothing in the last 24h so an empty feed still reads as
+        // there's nothing in the last 48h so an empty feed still reads as
         // "checked recently, genuinely quiet" rather than "broken."
         const refreshedHtml = updated
           ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatRelativeDateTime(updated))}</p>`
           : "";
         if (!items || !items.length) {
-          newsWrap.innerHTML = `${refreshedHtml}<p class="text-faint">No headlines in the last 24 hours.</p>`;
+          newsWrap.innerHTML = `${refreshedHtml}<p class="text-faint">No headlines in the last 48 hours.</p>`;
           return;
         }
         const visible = items.slice(0, NEWS_VISIBLE).map(newsLine).join("");
