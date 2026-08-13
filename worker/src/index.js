@@ -4,6 +4,10 @@
  *
  * Routes (all GET, JSON responses):
  *   /index                              -- replaces index.json
+ *   /news/recent                        -- home page "Latest News" feed: last
+ *                                           RECENT_NEWS_HOURS (24) of headlines across
+ *                                           every team, flat (not deduped/capped per
+ *                                           team), newest first (see getRecentTeamNews())
  *   /games/:season                      -- replaces data/games/{season}.json
  *   /games/:season/:week/leans          -- per-game situational/stat "lean" tallies for
  *                                           that week, plus an `odds_movement` block per
@@ -136,6 +140,43 @@ async function getTeamNewsFromD1(DB, teamAbbr) {
   return results.map((r) => ({ title: r.headline, link: r.link, source: r.source, pub_date: r.published }));
 }
 
+// /news/recent -- home page's "latest news, all teams" feed. Added
+// 2026-08-12, Jeff's ask. Flat feed across every team (not deduped/capped
+// per team), last RECENT_NEWS_HOURS only, newest first -- relies on the
+// same `published` ISO-format sort fix as getTeamNewsFromD1() above, so
+// this only works cleanly for rows inserted after that fix shipped (Jeff
+// cleared the table once already for the per-game card, same reasoning
+// applies here). Cutoff is computed to second precision (no milliseconds)
+// to exactly match the format normalize_pub_date() stores, avoiding a
+// string-comparison edge case where a millisecond-bearing cutoff could
+// sort as "earlier" than a same-instant row that has no fractional
+// seconds. RECENT_NEWS_LIMIT is generous (40) since the site caps the
+// visible count client-side (10 + "show more", same pattern as the
+// per-game card) -- no reason to round-trip twice for more.
+const RECENT_NEWS_HOURS = 24;
+const RECENT_NEWS_LIMIT = 40;
+
+async function getRecentTeamNews(DB) {
+  const cutoff = new Date(Date.now() - RECENT_NEWS_HOURS * 3600 * 1000).toISOString().slice(0, 19) + "Z";
+  const { results } = await DB.prepare(
+    `SELECT team_abbr, headline, link, source, published, game_id
+     FROM team_news
+     WHERE published >= ?
+     ORDER BY published DESC, id DESC
+     LIMIT ?`
+  )
+    .bind(cutoff, RECENT_NEWS_LIMIT)
+    .all();
+  return results.map((r) => ({
+    team: r.team_abbr,
+    title: r.headline,
+    link: r.link,
+    source: r.source,
+    pub_date: r.published,
+    game_id: r.game_id,
+  }));
+}
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -183,6 +224,10 @@ export default {
 
       if (path === "/index") {
         return json(await getIndex(DB));
+      }
+
+      if (path === "/news/recent") {
+        return json(await getRecentTeamNews(DB));
       }
 
       let m;

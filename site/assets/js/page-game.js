@@ -216,9 +216,19 @@
   // coverage.
   function newsLine(item) {
     const sourceHtml = item.source ? ` <span class="text-faint">&mdash; ${Util.escapeHtml(item.source)}</span>` : "";
+    // Util.formatDateTime already exists (same helper the odds-history
+    // table uses for snapshot_time) -- pub_date is ISO 8601 as of the
+    // 2026-08-12 sort-order fix (see fetch_team_news.py's
+    // normalize_pub_date()); falls back to showing the raw string as-is
+    // if it's not parseable (e.g. a pre-fix row still holding the old
+    // RFC 822 format).
+    const dateHtml = item.pub_date
+      ? `<div class="text-faint" style="font-size:0.75rem;">${Util.escapeHtml(Util.formatDateTime(item.pub_date))}</div>`
+      : "";
     return (
-      `<div class="row" style="font-size:0.85rem; align-items:flex-start; padding:6px 0; border-bottom:1px solid var(--color-border);">` +
-      `<a href="${Util.escapeHtml(item.link)}" target="_blank" rel="noopener">${Util.escapeHtml(item.title)}</a>${sourceHtml}` +
+      `<div class="row" style="font-size:0.85rem; padding:6px 0; border-bottom:1px solid var(--color-border); display:flex; flex-direction:column; gap:2px;">` +
+      `<div><a href="${Util.escapeHtml(item.link)}" target="_blank" rel="noopener">${Util.escapeHtml(item.title)}</a>${sourceHtml}</div>` +
+      dateHtml +
       `</div>`
     );
   }

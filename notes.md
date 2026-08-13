@@ -134,6 +134,44 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
   `git push` (site + script both changed), then clear the table as above, then either wait for
   the next scheduled run or trigger `workflow_dispatch` once to repopulate with clean,
   properly-sortable data.
+- **Confirmed working, same session:** Jeff ran the delete + a manual `workflow_dispatch`
+  (was momentarily queued -- normal GitHub Actions scheduling behavior, not a bug, resolved
+  itself in a minute or two). Checked `/game/2026_01_ARI_LAC` directly afterward: real
+  headlines for both teams, `pub_date` in the new sortable ISO format, newest first. Full
+  loop verified end to end.
+
+## Article date/time shown + home page "Latest News" feed (2026-08-12, same session)
+- Two more asks after confirming the above worked: (1) show each headline's actual date/time
+  on the card, (2) a general "all teams" news section on the home page, last 24h, top 10 with
+  a "show more" toggle.
+- **Date/time**: `page-game.js`'s `newsLine()` now shows `Util.formatDateTime(item.pub_date)`
+  under each headline -- reused the existing helper (same one the odds-history table already
+  uses for `snapshot_time`), no new formatting code needed. Only works cleanly for the new
+  ISO-format `pub_date` values (post the sort-order fix above); falls back to showing
+  whatever's there as-is for anything unparseable.
+- **Home page feed**: new Worker route `/news/recent` (`getRecentTeamNews()`) -- flat query
+  across every team's `team_news` rows, `WHERE published >= <24h-ago cutoff>`,
+  `ORDER BY published DESC, id DESC`, capped at 40. Cutoff is truncated to
+  `YYYY-MM-DDTHH:MM:SSZ` (no milliseconds) to exactly match `normalize_pub_date()`'s stored
+  format -- a millisecond-bearing cutoff could otherwise string-sort as "before" a same-second
+  row that has no fractional part, a subtle edge case avoided by matching formats exactly.
+  Not deduped or capped per team -- a genuinely flat "most recent across everyone" feed, per
+  Jeff's literal ask; a busy news day for one team could dominate the top 10, not yet solved
+  since it wasn't asked for.
+- **Site**: new `Data.getRecentTeamNews()` in `data.js`; new "Latest news" section on
+  `index.html` (`#latest-news-wrap`, between the status banner and the Explore nav cards);
+  `page-home.js` renders the first 10 with a "Show N more" toggle for the rest (same
+  collapse/delegated-click pattern as game.html's per-team card, copied rather than shared --
+  matches this project's one-file-per-page convention, no shared news-rendering module).
+  Each headline shows the team abbreviation (linked to that game's page when `game_id` is
+  known), the headline itself (linked out to the article), source, and date/time.
+- Verified: `node --check` on every changed file (`worker/src/index.js`, `data.js`,
+  `page-home.js`, `page-game.js`) -- all pass. Could not exercise the live fetch/render in a
+  browser from this sandbox.
+- **Not yet done (needs Jeff):** `wrangler deploy` (new route) + `git push`
+  (`site/index.html`, `site/assets/js/data.js`, `site/assets/js/page-home.js`,
+  `site/assets/js/page-game.js`) -- then load the home page and confirm the Latest News
+  section renders with real headlines from multiple teams.
 
 ## ESPN expert-picks step now non-blocking (fixed 2026-08-12)
 - Found immediately after the games.csv fix above, same verification pass: with games.csv
