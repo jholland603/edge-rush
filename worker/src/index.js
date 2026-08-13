@@ -175,6 +175,44 @@ function parseGoogleNewsRss(xml, limit) {
   return items;
 }
 
+// Temporary diagnostic route (/debug/team-news/:teamAbbr) -- added
+// 2026-08-12 because SEA and ARI stayed empty across a much wider when:3d
+// window over an extended period, which stopped looking like normal news-
+// volume variance and started looking like a real fetch failure. No way
+// to see the Worker's runtime logs from outside (needs `wrangler tail`),
+// so this bypasses the cache entirely and reports back the raw HTTP
+// status + a snippet of whatever Google actually sent, instead of
+// silently swallowing it into an empty array the way getTeamNewsLive()
+// does for the real game.html path. Safe to leave in (read-only, no
+// secrets involved, hits a public RSS feed) but fine to remove once this
+// is diagnosed.
+async function debugTeamNewsFetch(teamAbbr) {
+  const teamName = TEAM_ABBR_TO_NAME[teamAbbr];
+  if (!teamName) return { error: `unknown team ${teamAbbr}` };
+
+  const query = `"${teamName}" NFL when:3d`;
+  const rssUrl = `https://news.google.com/rss/search?${new URLSearchParams({
+    q: query, hl: "en-US", gl: "US", ceid: "US:en",
+  })}`;
+
+  try {
+    const resp = await fetch(rssUrl, { headers: { "User-Agent": "Mozilla/5.0 (edge-rush/1.0)" } });
+    const text = await resp.text();
+    return {
+      team: teamAbbr,
+      query,
+      rss_url: rssUrl,
+      status: resp.status,
+      ok: resp.ok,
+      response_length: text.length,
+      response_snippet: text.slice(0, 800),
+      parsed_items: parseGoogleNewsRss(text, TEAM_NEWS_LIMIT),
+    };
+  } catch (err) {
+    return { team: teamAbbr, query, rss_url: rssUrl, error: String((err && err.message) || err) };
+  }
+}
+
 // Live per-team headline fetch for game.html's Team News card. Edge-cached
 // (see header comment above) -- cache misses cost one outbound RSS fetch,
 // hits are instant. Never throws: any fetch/parse failure just yields an
@@ -397,6 +435,10 @@ export default {
         const result = await getFantasyRankings(DB, Number(m[1]), Number(m[2]), position, limit);
         if (result === null) return notFound(`no schedule for ${m[1]} week ${m[2]}`);
         return json(result);
+      }
+
+      if ((m = path.match(/^\/debug\/team-news\/([^/]+)$/))) {
+        return json(await debugTeamNewsFetch(decodeURIComponent(m[1]).toUpperCase()));
       }
 
       return notFound();
