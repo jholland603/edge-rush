@@ -131,13 +131,26 @@ const TEAM_NEWS_LIMIT = 8;
 // recommended Jeff clear the table once after this ships so every row is
 // consistently formatted; this tiebreaker just guards against whatever
 // old-format rows exist in the meantime sorting strangely.
+// Returns { items, last_fetched } -- last_fetched is MAX(fetched) for this
+// team (when the pipeline last found/inserted a NEW headline for them, NOT
+// necessarily the last time the job ran -- INSERT OR IGNORE means a run
+// that finds nothing new for a quiet team leaves `fetched` untouched, see
+// scripts/fetch_team_news.py). getGameDetail() combines both teams' values
+// into one "Last refreshed" line for the whole Team News section (added
+// 2026-08-13, Jeff's ask) rather than showing it twice.
 async function getTeamNewsFromD1(DB, teamAbbr) {
-  const { results } = await DB.prepare(
-    `SELECT headline, link, source, published FROM team_news WHERE team_abbr = ? ORDER BY published DESC, id DESC LIMIT ?`
-  )
-    .bind(teamAbbr, TEAM_NEWS_LIMIT)
-    .all();
-  return results.map((r) => ({ title: r.headline, link: r.link, source: r.source, pub_date: r.published }));
+  const [newsResult, fetchedResult] = await Promise.all([
+    DB.prepare(
+      `SELECT headline, link, source, published FROM team_news WHERE team_abbr = ? ORDER BY published DESC, id DESC LIMIT ?`
+    )
+      .bind(teamAbbr, TEAM_NEWS_LIMIT)
+      .all(),
+    DB.prepare(`SELECT MAX(fetched) AS last_fetched FROM team_news WHERE team_abbr = ?`).bind(teamAbbr).first(),
+  ]);
+  return {
+    items: newsResult.results.map((r) => ({ title: r.headline, link: r.link, source: r.source, pub_date: r.published })),
+    last_fetched: fetchedResult ? fetchedResult.last_fetched : null,
+  };
 }
 
 // /news/recent -- home page's "latest news, all teams" feed. Added
@@ -156,25 +169,38 @@ async function getTeamNewsFromD1(DB, teamAbbr) {
 const RECENT_NEWS_HOURS = 24;
 const RECENT_NEWS_LIMIT = 40;
 
+// Returns { items, updated } -- updated is MAX(fetched) across the WHOLE
+// table (not just the 24h window items reflects), added 2026-08-13 for the
+// home page's "Last refreshed" line. Unfiltered on purpose: with 32 teams
+// checked up to 12x/week, some team almost always has a fresh `fetched`
+// value even on a quiet news day overall, so this is a meaningfully more
+// stable "is the pipeline actually running" signal than any single team's
+// MAX(fetched) would be (see the per-team caveat on getTeamNewsFromD1()).
 async function getRecentTeamNews(DB) {
   const cutoff = new Date(Date.now() - RECENT_NEWS_HOURS * 3600 * 1000).toISOString().slice(0, 19) + "Z";
-  const { results } = await DB.prepare(
-    `SELECT team_abbr, headline, link, source, published, game_id
-     FROM team_news
-     WHERE published >= ?
-     ORDER BY published DESC, id DESC
-     LIMIT ?`
-  )
-    .bind(cutoff, RECENT_NEWS_LIMIT)
-    .all();
-  return results.map((r) => ({
-    team: r.team_abbr,
-    title: r.headline,
-    link: r.link,
-    source: r.source,
-    pub_date: r.published,
-    game_id: r.game_id,
-  }));
+  const [newsResult, fetchedResult] = await Promise.all([
+    DB.prepare(
+      `SELECT team_abbr, headline, link, source, published, game_id
+       FROM team_news
+       WHERE published >= ?
+       ORDER BY published DESC, id DESC
+       LIMIT ?`
+    )
+      .bind(cutoff, RECENT_NEWS_LIMIT)
+      .all(),
+    DB.prepare(`SELECT MAX(fetched) AS last_fetched FROM team_news`).first(),
+  ]);
+  return {
+    items: newsResult.results.map((r) => ({
+      team: r.team_abbr,
+      title: r.headline,
+      link: r.link,
+      source: r.source,
+      pub_date: r.published,
+      game_id: r.game_id,
+    })),
+    updated: fetchedResult ? fetchedResult.last_fetched : null,
+  };
 }
 
 function json(data, status = 200) {
@@ -2100,7 +2126,7 @@ async function getGameDetail(DB, gameId) {
     .first();
   if (!game) return null;
 
-  const [model, homeRecent, awayRecent, homeFull, awayFull, h2h, teamNames, signals, oddsHistory, oddsAverageMap, awayNews, homeNews] = await Promise.all([
+  const [model, homeRecent, awayRecent, homeFull, awayFull, h2h, teamNames, signals, oddsHistory, oddsAverageMap, awayNewsResult, homeNewsResult] = await Promise.all([
     DB.prepare(
       `SELECT matchup, market_spread, model_spread, edge, p_home_covers, flagged, market_total,
               home_injuries_out, away_injuries_out, updated, note
@@ -2157,6 +2183,15 @@ async function getGameDetail(DB, gameId) {
   const team_names = {};
   for (const row of teamNames.results) team_names[row.team_abbr] = row.team_name;
 
+  // Combine both teams' last_fetched into one "Last refreshed" value for
+  // the whole Team News section -- whichever is more recent (a team whose
+  // headline set hasn't changed in a few days shouldn't drag the shared
+  // indicator back when the other team's did just get refreshed).
+  const teamNewsUpdated = [awayNewsResult.last_fetched, homeNewsResult.last_fetched]
+    .filter(Boolean)
+    .sort()
+    .pop() || null;
+
   return {
     game,
     model: model ? { ...model, flagged: !!model.flagged } : null,
@@ -2167,7 +2202,7 @@ async function getGameDetail(DB, gameId) {
     head_to_head: h2h.results,
     odds_history: oddsHistory.results,
     odds_average: oddsAverageMap[gameId] || null,
-    team_news: { away: awayNews, home: homeNews },
+    team_news: { away: awayNewsResult.items, home: homeNewsResult.items, updated: teamNewsUpdated },
     updated: new Date().toISOString(),
   };
 }

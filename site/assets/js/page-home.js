@@ -39,9 +39,16 @@
     });
 
     Data.getRecentTeamNews()
-      .then((items) => {
+      .then(({ items, updated }) => {
+        // "Last refreshed" -- MAX(fetched) across the whole team_news
+        // table (see getRecentTeamNews() in the Worker), shown even when
+        // there's nothing in the last 24h so an empty feed still reads as
+        // "checked recently, genuinely quiet" rather than "broken."
+        const refreshedHtml = updated
+          ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatDateTime(updated))}</p>`
+          : "";
         if (!items || !items.length) {
-          newsWrap.innerHTML = `<p class="text-faint">No headlines in the last 24 hours.</p>`;
+          newsWrap.innerHTML = `${refreshedHtml}<p class="text-faint">No headlines in the last 24 hours.</p>`;
           return;
         }
         const visible = items.slice(0, NEWS_VISIBLE).map(newsLine).join("");
@@ -52,7 +59,7 @@
             `<button type="button" class="team-news-more-toggle" style="background:none;border:none;color:var(--color-accent);cursor:pointer;padding:6px 0 0;font-size:0.8rem;">Show ${rest.length} more</button>` +
             `</div>`
           : "";
-        newsWrap.innerHTML = `<div class="card">${visible}${restHtml}</div>`;
+        newsWrap.innerHTML = `${refreshedHtml}<div class="card">${visible}${restHtml}</div>`;
       })
       .catch(() => {
         newsWrap.innerHTML = `<p class="text-faint">Couldn't load news right now.</p>`;

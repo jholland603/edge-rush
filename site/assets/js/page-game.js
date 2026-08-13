@@ -270,7 +270,18 @@
       teamNewsWrap.innerHTML = `<div class="loading">Loading&hellip;</div>`;
       return;
     }
+    // "Last refreshed" -- one shared indicator for the whole section (not
+    // duplicated per side), added 2026-08-13. team_news.updated is
+    // whichever of the two teams' data was more recently touched by the
+    // pipeline (see the Worker's getGameDetail() comment) -- an honest
+    // "as of" marker, not a claim the pipeline definitely ran today (a
+    // quiet team with nothing new wouldn't move this on its own, see
+    // getTeamNewsFromD1()'s comment for the full caveat).
+    const refreshedHtml = team_news.updated
+      ? `<p class="text-faint" style="font-size:0.78rem; margin-bottom:8px;">Last refreshed: ${Util.escapeHtml(Util.formatDateTime(team_news.updated))}</p>`
+      : "";
     teamNewsWrap.innerHTML = `
+      ${refreshedHtml}
       <div class="card-grid">
         <div class="card stat-card">
           <div class="signal-card__title"><span>${Util.escapeHtml(g.away_team)}</span></div>
