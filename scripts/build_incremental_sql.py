@@ -205,9 +205,49 @@ def build_player_dim_statements(raw_dir: Path, season: int) -> list:
 
 
 # ---------------------------------------------------------------------------
-# 2. game -- upsert every row for the season; coach/referee looked up by
-#    name via subquery (after ensuring they exist) instead of a precomputed id.
+# 2. game -- upsert every row for the season; coach/referee/stadium looked up
+#    by name/id via subquery or direct FK (after ensuring they exist) instead
+#    of a precomputed id.
+#
+#    stadium is a small static reference table (see D1_IMPORT_README.md) that
+#    was only ever seeded once, during the original bulk historical load --
+#    nothing kept it in sync with new international-game venues added to
+#    later schedules. game.stadium_id has a NOT NULL-ish FK to stadium, and
+#    unlike home_coach_id/away_coach_id/referee_id (looked up via subquery
+#    after an INSERT OR IGNORE a few lines below), stadium_id is written
+#    straight from the CSV -- so a new venue (e.g. the 2026 season's first
+#    games at Melbourne Cricket Ground, Maracana, Stade de France, a new
+#    Bernabeu code, a new Munich code) silently violates the FK and aborts
+#    the entire incremental.sql file, taking down every other statement in
+#    it (including next steps like reconcile_picks.py that never get to
+#    run). Fixed 2026-08-25 after that exact failure -- see HANDOFF.md.
+#    Ensure new stadium_ids the same way coach/referee are ensured below.
 # ---------------------------------------------------------------------------
+def build_stadium_statements(raw_dir: Path, season: int) -> list:
+    f = raw_dir / "games.csv"
+    if not f.exists():
+        return []
+    df = pd.read_csv(f, low_memory=False)
+    df = df[df["season"] == season]
+    if df.empty:
+        return []
+
+    seen = {}
+    for r in df.itertuples(index=False):
+        d = r._asdict()
+        sid = clean(d.get("stadium_id"))
+        name = clean(d.get("stadium"))
+        if sid and sid not in seen:
+            seen[sid] = name
+
+    stmts = [
+        f"INSERT OR IGNORE INTO stadium (stadium_id, stadium_name) VALUES ({esc(sid)}, {esc(name)});"
+        for sid, name in seen.items()
+    ]
+    print(f"stadium: {len(stmts)} candidate new stadium_id(s) ensured from season {season} games.csv")
+    return stmts
+
+
 def build_game_statements(raw_dir: Path, season: int) -> list:
     f = raw_dir / "games.csv"
     if not f.exists():
@@ -450,9 +490,10 @@ def main():
     args = parser.parse_args()
 
     statements = []
-    # Order matters: player dimension and coach/referee/game before anything
-    # that FKs to them; hub tables before their category tables.
+    # Order matters: player/stadium dimension and coach/referee/game before
+    # anything that FKs to them; hub tables before their category tables.
     statements += build_player_dim_statements(args.raw_dir, args.season)
+    statements += build_stadium_statements(args.raw_dir, args.season)
     statements += build_game_statements(args.raw_dir, args.season)
     statements += build_team_game_statements(args.raw_dir, args.season)
     statements += build_player_game_statements(args.raw_dir, args.season)
