@@ -620,10 +620,21 @@
     });
   }
 
+  // Bump this whenever SEED_PLAYERS is refreshed with a new rankings
+  // snapshot. A returning visitor's board is saved in localStorage, so
+  // without this, a code update alone would never reach anyone who already
+  // has a saved draft -- they'd keep seeing whatever board existed the first
+  // time they loaded the page, no matter how the seed data changes underneath
+  // them. On load, a mismatched (or missing/pre-this-feature) version
+  // refreshes just the player list -- settings and any picks already made
+  // are left alone.
+  const SEED_VERSION = "fantasypros-2026-08-25";
+
   function defaultState() {
     return {
       settings: { teams: 12, mySlot: 5, scoring: "PPR", draftType: "SNAKE", roster: Object.assign({}, DEFAULT_ROSTER), auctionBudget: 200 },
       players: makeSeedPlayers(),
+      seedVersion: SEED_VERSION,
       picks: [],
       ui: { posFilter: "ALL", search: "", hideDrafted: true, activeTab: "board" },
     };
@@ -635,6 +646,13 @@
     const raw = localStorage.getItem(STORE_KEY);
     state = raw ? JSON.parse(raw) : defaultState();
     if (!state || !state.settings || !state.players || !state.ui) state = defaultState();
+    else if (state.seedVersion !== SEED_VERSION && state.seedVersion !== "custom") {
+      // Built-in rankings changed since this board was last saved (or this
+      // save predates the SEED_VERSION check entirely) -- refresh to the
+      // current seed board, but keep settings/picks/ui as they were.
+      state.players = makeSeedPlayers();
+      state.seedVersion = SEED_VERSION;
+    }
   } catch (e) {
     state = defaultState(); // storage unavailable (private mode, quota, etc.) -- run in-memory only
   }
@@ -1195,6 +1213,9 @@
     const players = parseCsv(text);
     if (players.length === 0) return;
     state.players = players;
+    // Mark this board as hand-imported so a future built-in SEED_VERSION
+    // bump doesn't silently overwrite it -- see the seedVersion check above.
+    state.seedVersion = "custom";
     render();
   });
 
