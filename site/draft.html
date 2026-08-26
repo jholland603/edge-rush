@@ -62,11 +62,14 @@
     </div>
 
     <h3>Import / export rankings</h3>
-    <p class="text-faint" style="margin-top:0;">Starter board below is a preseason sketch, not live ADP. Paste a
-      fresh cheat-sheet CSV here the morning of your draft &mdash; format is
-      <code class="mono">name,pos,team,tier,flags</code> (flags are optional, pipe-separated, e.g.
-      <code class="mono">anchor</code> or <code class="mono">rookie|trap</code>).</p>
-    <textarea class="io" id="import-box" placeholder="name,pos,team,tier,flags&#10;Ja'Marr Chase,WR,CIN,1,anchor"></textarea>
+    <p class="text-faint" style="margin-top:0;">Starter board below is FantasyPros' 2026 PPR consensus rankings
+      (108 experts), snapshotted Aug 25, 2026 &mdash; real bye weeks and tiers, with the "value"/"sexy pick" flags
+      computed from that snapshot's ECR-vs-ADP gap (see draft.html's inline comments if you want the exact rule).
+      ADP drifts as the preseason goes on, so paste a fresh cheat-sheet CSV here the morning of your draft if it's
+      been a while &mdash; format is <code class="mono">name,pos,team,tier,flags,bye</code> (flags optional,
+      pipe-separated, e.g. <code class="mono">anchor</code> or <code class="mono">rookie|trap</code>; bye
+      optional).</p>
+    <textarea class="io" id="import-box" placeholder="name,pos,team,tier,flags,bye&#10;Ja'Marr Chase,WR,CIN,1,,6"></textarea>
     <div style="display:flex; gap:var(--space-2); flex-wrap:wrap; margin-top:var(--space-2);">
       <button type="button" class="btn" id="btn-import">Import &amp; replace board</button>
       <button type="button" class="btn" id="btn-export-download">Download board as CSV</button>
@@ -110,7 +113,7 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Tier</th><th>Player</th><th>Team</th><th>Flags</th><th style="text-align:right;">Action</th></tr>
+          <tr><th>Tier</th><th>Player</th><th>Team</th><th>Bye</th><th>Flags</th><th style="text-align:right;">Action</th></tr>
         </thead>
         <tbody id="board-body"></tbody>
       </table>
