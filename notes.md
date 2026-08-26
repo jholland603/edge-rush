@@ -376,3 +376,35 @@ Running notes so nothing gets lost between sessions. Not a deliverable, just a s
 - Moneylines/odds: 0% coverage 1999-2005 (doesn't exist in the source), scattered gaps 2006-2009, essentially complete 2010+.
 - Injuries data: only available 2009-2025, nothing before that.
 - Player stats: 1999-2024 pulled; 2025 not yet published by nflverse as of this writing.
+
+## Backtest baseline correction -- always compare against the CURRENT live model (2026-08-14)
+
+- Jeff caught two drift issues in the same session: (1) the recency-weighted
+  last-6-games backtest (backtest_v16) had one sub-test that compared against
+  the OLD 8-feature EWMA baseline (rest/wind/dome/qb_change/injury included),
+  when the actual live model (as of 2026-08-11) is pass_edge+rush_edge ONLY.
+  (2) that same backtest, plus the follow-up window/decay grid search
+  (backtest_v17), built their rolling ratings from REG-season games only
+  (bv2.load_team_games's filter) -- but fit_model_coefficients.py's live
+  rolling-10 window explicitly includes POST (playoff) games too
+  (load_team_games_all_types, "games played in 2020 have less than zero
+  effect" reasoning, Jeff's spec, see the fit_model_coefficients.py entry
+  above). Neither error changed the headline conclusion (no edge survived a
+  permutation/holdout check either way), but both compared against a stale
+  or mismatched definition of "the current model."
+- **Standing rule going forward:** any backtest that claims to compare
+  against "the current model" must match fit_model_coefficients.py exactly --
+  rolling-10 window, REG+POST games (load_team_games_all_types, not
+  bv2.load_team_games), FEATURES=[pass_edge, rush_edge] only, same
+  coefficients-fitting approach (single OLS fit on full history, not
+  walk-forward -- that's the live-scoring model, separate from the
+  walk-forward hit-rate TESTING methodology every backtest_v* script uses to
+  measure whether an idea would have beaten the market). The older
+  8-feature/EWMA/REG-only baseline is still fine to use on its own terms
+  (e.g. "does this beat the historically-tested EWMA approach") but must
+  never be presented as "the current model" without saying so explicitly.
+- **Not yet done:** re-run backtest_v16/v17 with REG+POST rolling ratings to
+  confirm the no-edge conclusion holds under the actual current definition,
+  not just the REG-only proxy. Expected to hold (POST games are a small
+  fraction of the sample -- 26 of ~570 team-games per season) but not yet
+  actually re-verified.

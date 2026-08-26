@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { key: "players", label: "Players", href: "players.html" },
   { key: "trends", label: "Trends", href: "trends.html" },
   { key: "fantasy", label: "Fantasy", href: "fantasy.html" },
+  { key: "draft", label: "Draft", href: "draft.html" },
 ];
 
 class SiteHeader extends HTMLElement {
@@ -60,6 +61,7 @@ class SiteFooter extends HTMLElement {
           <a href="players.html">Players</a>
           <a href="trends.html">Trends</a>
           <a href="fantasy.html">Fantasy</a>
+          <a href="draft.html">Draft</a>
         </div>
       </div>
     `;

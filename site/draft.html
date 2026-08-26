@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Edge Rush &mdash; Draft</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="stylesheet" href="assets/css/draft.css">
+</head>
+<body>
+
+<site-header active="draft"></site-header>
+
+<main>
+  <div class="page-header">
+    <h1>Draft War Room</h1>
+    <p>A live draft-day board: tiered rankings, a pick tracker that knows your snake slot (or an auction budget
+      tracker), and running strategy alerts so a position run or a name-value reach doesn't talk you into a bad
+      pick. Everything below runs entirely in this browser tab and saves as you go &mdash; nothing here touches
+      the model/backtest data.</p>
+  </div>
+
+  <details class="page-section" id="settings-section" open>
+    <summary><h2>League settings</h2></summary>
+
+    <div class="controls">
+      <div class="control">
+        <label for="cfg-teams">Teams</label>
+        <input type="number" id="cfg-teams" min="4" max="20" step="1">
+      </div>
+      <div class="control">
+        <label for="cfg-slot">My draft slot</label>
+        <input type="number" id="cfg-slot" min="1" max="20" step="1">
+      </div>
+      <div class="control">
+        <label for="cfg-scoring">Scoring</label>
+        <select id="cfg-scoring">
+          <option value="PPR">Full PPR</option>
+          <option value="HALF">Half PPR</option>
+          <option value="STD">Standard</option>
+        </select>
+      </div>
+      <div class="control" id="cfg-budget-control" style="display:none;">
+        <label for="cfg-budget">Auction budget $</label>
+        <input type="number" id="cfg-budget" min="10" max="1000" step="1">
+      </div>
+    </div>
+
+    <div class="view-toggle" id="draft-type-toggle">
+      <button type="button" data-type="SNAKE" class="active">Snake draft</button>
+      <button type="button" data-type="AUCTION">Auction draft</button>
+    </div>
+
+    <h3>Roster spots</h3>
+    <div class="roster-inputs" id="roster-inputs"></div>
+
+    <div style="display:flex; gap:var(--space-2); flex-wrap:wrap; margin-bottom:var(--space-5);">
+      <button type="button" class="btn" id="btn-apply">Apply settings</button>
+      <button type="button" class="btn" id="btn-reset-draft">Reset draft</button>
+      <button type="button" class="btn" id="btn-full-reset">Factory reset</button>
+    </div>
+
+    <h3>Import / export rankings</h3>
+    <p class="text-faint" style="margin-top:0;">Starter board below is a preseason sketch, not live ADP. Paste a
+      fresh cheat-sheet CSV here the morning of your draft &mdash; format is
+      <code class="mono">name,pos,team,tier,flags</code> (flags are optional, pipe-separated, e.g.
+      <code class="mono">anchor</code> or <code class="mono">rookie|trap</code>).</p>
+    <textarea class="io" id="import-box" placeholder="name,pos,team,tier,flags&#10;Ja'Marr Chase,WR,CIN,1,anchor"></textarea>
+    <div style="display:flex; gap:var(--space-2); flex-wrap:wrap; margin-top:var(--space-2);">
+      <button type="button" class="btn" id="btn-import">Import &amp; replace board</button>
+      <button type="button" class="btn" id="btn-export-download">Download board as CSV</button>
+      <button type="button" class="btn" id="btn-export-show">Show current board as text</button>
+    </div>
+  </details>
+
+  <div class="card-grid" id="scoreboard" style="grid-template-columns: repeat(4, minmax(140px,1fr));"></div>
+
+  <div class="view-toggle" id="tab-toggle">
+    <button type="button" data-tab="board" class="active">Board</button>
+    <button type="button" data-tab="mydraft">My Draft</button>
+    <button type="button" data-tab="strategy">Strategy</button>
+    <button type="button" data-tab="auction">Auction</button>
+  </div>
+
+  <section id="tab-board">
+    <div class="card-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px,1fr)); margin-bottom:var(--space-4);">
+      <div class="card">
+        <h3>My roster</h3>
+        <ul id="roster-list" style="list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:var(--space-2);"></ul>
+      </div>
+      <div class="card">
+        <h3>Position run <span class="text-faint">&middot; last 8 picks, any team</span></h3>
+        <div class="run-tracker" id="run-tracker"></div>
+        <div id="run-alert"></div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <div class="view-toggle" id="pos-filter" style="margin-bottom:0;"></div>
+      <div class="control" style="flex:1; min-width:200px;">
+        <label for="search-box">Search</label>
+        <input type="search" id="search-box" placeholder="Player or team&hellip;">
+      </div>
+      <label style="display:flex; align-items:center; gap:var(--space-2); font-size:0.85rem; color:var(--color-text-dim); padding-bottom:var(--space-2);">
+        <input type="checkbox" id="hide-drafted" checked> Hide drafted
+      </label>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Tier</th><th>Player</th><th>Team</th><th>Flags</th><th style="text-align:right;">Action</th></tr>
+        </thead>
+        <tbody id="board-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-mydraft" style="display:none;">
+    <div class="banner info" id="phase-banner"></div>
+    <div id="nudges"></div>
+
+    <h2>Your pick sequence</h2>
+    <div class="chip-row" id="pick-list"></div>
+
+    <h2>Roster board</h2>
+    <div class="roster-slots" id="roster-board"></div>
+  </section>
+
+  <section id="tab-strategy" style="display:none;">
+    <div class="strategy-layout" id="strategy-layout"></div>
+  </section>
+
+  <section id="tab-auction" style="display:none;">
+    <div class="banner info tight">Only affects picks marked <strong>Mine</strong> once Draft type above is set to
+      Auction &mdash; the board's Mine button will ask for the winning bid.</div>
+    <div class="card-grid" id="auction-stats" style="grid-template-columns: repeat(auto-fit, minmax(150px,1fr));"></div>
+    <div id="auction-article"></div>
+  </section>
+</main>
+
+<site-footer></site-footer>
+
+<script src="assets/js/components.js"></script>
+<script src="assets/js/util.js"></script>
+<script src="assets/js/page-draft.js"></script>
+</body>
+</html>

@@ -1,0 +1,127 @@
+/* ==========================================================================
+   Draft War Room -- page-specific additions on top of style.css.
+
+   Deliberately small: this reuses the shared vocabulary (.card, .card-grid,
+   .stat-card, .badge, .banner, .chip/.chip-row, .view-toggle, .controls,
+   .page-section, table-wrap) wherever it already covers the need. Only what's
+   genuinely new to this page lives here -- the roster-spot counters, tier/
+   flag badge colors, roster-slot cards, the position-run bars, and a couple
+   banner/badge variants style.css had no prior reason to define.
+   ========================================================================== */
+
+/* League-settings roster-spot counters (QB/RB/WR/TE/FLEX/DST/K/BENCH) */
+.roster-inputs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: var(--space-2);
+  margin: var(--space-2) 0 var(--space-4);
+}
+.roster-inputs .rf {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.roster-inputs .rf label {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-dim);
+}
+.roster-inputs .rf input {
+  width: 46px;
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  text-align: right;
+}
+
+/* CSV import/export box -- same visual language as select/input in style.css */
+textarea.io {
+  display: block;
+  width: 100%;
+  min-height: 84px;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  padding: var(--space-3);
+  resize: vertical;
+}
+textarea.io:focus { outline: none; border-color: var(--color-accent-dim); }
+
+/* Tier badges (draft-board ordering signal) and two banner variants --
+   style.css only had .warn/.info banners and no tier concept before this
+   page; the flag badges below (rookie/injury/anchor/etc.) reuse the
+   existing positive/negative/neutral/warn badge colors as-is. */
+.badge.tier1 { background: rgba(240, 184, 75, 0.15); color: var(--color-warn); }
+.badge.tier2 { background: rgba(79, 209, 165, 0.15); color: var(--color-accent); }
+
+.banner.danger { background: rgba(229, 99, 110, 0.08); border-color: rgba(229, 99, 110, 0.35); color: #f0a2a9; }
+.banner.good { background: rgba(79, 209, 165, 0.08); border-color: rgba(79, 209, 165, 0.35); color: #9fe6c9; }
+.banner.tight { padding: var(--space-3) var(--space-4); margin-bottom: var(--space-2); font-size: 0.86rem; }
+
+/* Scoreboard stat-cards need a "this one matters right now" state beyond the
+   default accent-colored .value */
+.stat-card.warn .value { color: var(--color-warn); }
+.stat-card.danger .value { color: var(--color-danger); }
+
+/* My Draft tab: roster-board slot cards */
+.roster-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+.roster-slot {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+.roster-slot.filled { border-color: var(--color-accent-dim); }
+.roster-slot.urgent { border-color: var(--color-danger); background: rgba(229, 99, 110, 0.06); }
+.roster-slot__type { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-dim); }
+.roster-slot__name { font-weight: 600; margin-top: 2px; }
+
+/* Your pick sequence -- .chip/.chip-row reused as-is; "already happened" and
+   "you're up next" need their own states on top of the default chip look */
+.chip.next { border-color: var(--color-accent-dim); color: var(--color-accent); font-weight: 700; }
+.chip.done { opacity: 0.4; text-decoration: line-through; }
+
+/* Position-run tracker (RB/WR/QB/TE off the board in the last 8 picks) */
+.run-tracker { display: flex; flex-wrap: wrap; gap: var(--space-3) var(--space-5); }
+.run-row { display: flex; align-items: center; gap: var(--space-2); font-size: 0.85rem; }
+.run-row__pos { font-family: var(--font-mono); font-weight: 600; color: var(--color-text-dim); width: 26px; }
+.run-row__track { width: 84px; height: 6px; background: var(--color-bg-elevated); border-radius: 4px; overflow: hidden; }
+.run-row__fill { height: 100%; background: var(--color-accent); }
+.run-row__fill.alert { background: var(--color-danger); }
+.run-row__count { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text-faint); width: 12px; text-align: right; }
+
+/* Strategy tab */
+.pullquote {
+  border-left: 3px solid var(--color-accent);
+  padding: var(--space-1) 0 var(--space-1) var(--space-4);
+  margin: var(--space-4) 0;
+  font-size: 1.02rem;
+  color: var(--color-text);
+}
+/* minmax(0, ...) rather than bare fr values -- a grid item's default
+   min-width is "auto" (content-based), so the wide Hero/Zero RB comparison
+   table inside `article` would otherwise blow the column out past its 2fr
+   share instead of triggering .table-wrap's own overflow-x scroll. */
+.strategy-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--space-6); align-items: start; }
+.strategy-layout article { max-width: 66ch; }
+.strategy-layout aside { position: sticky; top: var(--space-4); }
+.strategy-layout aside ul { margin: 0; padding-left: 1.1em; }
+.strategy-layout aside li { margin-bottom: var(--space-3); font-size: 0.88rem; color: var(--color-text-dim); }
+@media (max-width: 860px) { .strategy-layout { grid-template-columns: 1fr; } }
+
+/* Auction-mode inline bid input next to a board row's "Mine" button */
+.auction-bid { display: inline-flex; gap: var(--space-2); align-items: center; }
+.auction-bid input { width: 60px; min-width: 0; text-align: right; }

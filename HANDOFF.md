@@ -11,6 +11,11 @@ repeatedly across sessions). Editing files (Read/Edit/Write) and querying
 D1 directly via the Cloudflare MCP tools is fine and expected -- it's only
 git/gh/wrangler invocations that don't work.
 
+**Read-only git (`git status`, `git log`, `git show`, `git diff`) is fine
+and Jeff's preference** (confirmed 2026-08-13) -- use it to check whether
+changes landed/committed. It's specifically the write commands
+(add/commit/push) that stay off-limits, not git as a whole.
+
 This isn't just "it'll fail cleanly" -- a `git commit` attempted from this
 sandbox has repeatedly left stale `.git/index.lock` / `.git/HEAD.lock`
 files behind (cross-filesystem permission issue between the sandbox mount
@@ -19,12 +24,31 @@ unlink it after). Jeff has had to manually delete these more than once
 already (`del .git\index.lock` / `del .git\HEAD.lock` from his own
 terminal, not from the sandbox -- the sandbox can't remove them either).
 
-**What to do instead:** make the file edits, then just tell Jeff what
-changed and that he needs to `git add`/`commit`/`push` himself -- plus a
-`wrangler deploy` from `worker/` and/or a site push if the Worker or
-`site/` files changed (same two-step deploy pattern noted throughout this
-file). Don't attempt any of that from here, even if it looks like it might
-work this time.
+Even read-only commands aren't fully safe from this: `git status` alone can
+create `.git/index.lock` (refreshing the index) and then fail to unlink it
+the same way a commit would. **Workaround found 2026-08-13: `mv` the stale
+lock file to a new name (e.g. `.git/index.lock.stale_<timestamp>`) instead
+of trying to delete it** -- rename succeeds from the sandbox even though
+unlink doesn't. Do this immediately after any `git status` call that warns
+about it, so a leftover lock doesn't block Jeff's own git use or any
+auto-commit process running natively on his machine.
+
+**Note on auto-commits:** as of 2026-08-13, something is auto-committing
+changes to this repo with Jeff's author identity shortly after files land
+on disk (observed twice, both reusing the commit message "condense odds
+movement" verbatim regardless of what actually changed) -- not triggered
+by Claude, and the mechanism doing it hasn't been identified yet. Worth
+Jeff confirming what it is; until then, don't assume "no commit yet" means
+it never will, or that a commit message accurately describes its diff --
+check `git show --stat <hash>` if it matters.
+
+**What to do instead (for the actual write step):** make the file edits,
+then just tell Jeff what changed and that he needs to `git add`/`commit`/
+`push` himself -- plus a `wrangler deploy` from `worker/` and/or a site
+push if the Worker or `site/` files changed (same two-step deploy pattern
+noted throughout this file). Don't attempt the write step from here, even
+if it looks like it might work this time -- but do use `git status`/`log`
+freely to check state.
 
 ## What this project is
 
