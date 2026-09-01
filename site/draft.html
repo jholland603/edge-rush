@@ -62,13 +62,14 @@
     </div>
 
     <h3>Import / export rankings</h3>
-    <p class="text-faint" style="margin-top:0;">Starter board below is FantasyPros' 2026 PPR consensus rankings
-      (108 experts), snapshotted Aug 25, 2026 &mdash; real bye weeks and tiers, with the "value"/"sexy pick" flags
-      computed from that snapshot's ECR-vs-ADP gap (see draft.html's inline comments if you want the exact rule).
-      ADP drifts as the preseason goes on, so paste a fresh cheat-sheet CSV here the morning of your draft if it's
-      been a while &mdash; format is <code class="mono">name,pos,team,tier,flags,bye</code> (flags optional,
-      pipe-separated, e.g. <code class="mono">anchor</code> or <code class="mono">rookie|trap</code>; bye
-      optional).</p>
+    <p class="text-faint" style="margin-top:0;">Starter board below blends two independent 2026 sources, both
+      snapshotted Sep 1, 2026: FantasyPros' PPR consensus rankings (100 experts) and ESPN's own projected-points
+      rankings &mdash; each player's overall rank is the average of the two where ESPN ranked them, with real bye
+      weeks and FantasyPros' own tiers, and "value"/"sexy pick" flags computed from where the two sources disagree
+      (see draft.html's inline comments if you want the exact rule). Both drift as the preseason goes on, so paste
+      a fresh cheat-sheet CSV here the morning of your draft if it's been a while &mdash; format is
+      <code class="mono">name,pos,team,tier,flags,bye</code> (flags optional, pipe-separated, e.g.
+      <code class="mono">anchor</code> or <code class="mono">rookie|trap</code>; bye optional).</p>
     <textarea class="io" id="import-box" placeholder="name,pos,team,tier,flags,bye&#10;Ja'Marr Chase,WR,CIN,1,,6"></textarea>
     <div style="display:flex; gap:var(--space-2); flex-wrap:wrap; margin-top:var(--space-2);">
       <button type="button" class="btn" id="btn-import">Import &amp; replace board</button>
