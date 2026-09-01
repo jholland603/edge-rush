@@ -770,6 +770,54 @@
     return { label: "Lottery tickets", text: "Rookie stashes, injury-comeback bets, and your DST/K -- last, always." };
   }
 
+  // Bye-week stacking check, per position: QB/TE/DST/K only ever start ONE
+  // player, so any two of them sharing a bye leaves that week uncovered --
+  // the whole point of a backup at those spots is to NOT be dark the same
+  // week as your starter. RB/WR start more than one, so the real mistake
+  // there isn't any partial overlap (two of three WRs sharing a bye is
+  // normal and usually fine) -- it's the WHOLE starting group going dark at
+  // once. Both cases reduce to the same rule: flag a bye week once the
+  // number of your rostered players at that position sharing it reaches
+  // max(startersNeeded, 2). FLEX isn't modeled separately (it can be filled
+  // by RB/WR/TE, so it doesn't have one fixed position to check against).
+  function byeCollisionThreshold(pos) {
+    return Math.max(state.settings.roster[pos] || 0, 2);
+  }
+
+  // { pos: { bye: count } } across everything currently on my roster.
+  function myByeCounts() {
+    const out = {};
+    state.picks.filter((pk) => pk.owner === "me").forEach((pk) => {
+      const pl = playerById(pk.playerId);
+      if (!pl || !pl.bye) return;
+      out[pl.pos] = out[pl.pos] || {};
+      out[pl.pos][pl.bye] = (out[pl.pos][pl.bye] || 0) + 1;
+    });
+    return out;
+  }
+
+  // Plain-language summary of any bye-week collisions that already exist on
+  // my roster (used in the nudges panel, after the picks are made).
+  function byeCollisionSummary() {
+    const myPlayers = state.picks.filter((pk) => pk.owner === "me").map((pk) => playerById(pk.playerId)).filter(Boolean);
+    const out = [];
+    ["QB", "RB", "WR", "TE", "DST", "K"].forEach((pos) => {
+      const atPos = myPlayers.filter((pl) => pl.pos === pos && pl.bye);
+      if (atPos.length < 2) return;
+      const threshold = byeCollisionThreshold(pos);
+      const byBye = {};
+      atPos.forEach((pl) => { (byBye[pl.bye] = byBye[pl.bye] || []).push(pl); });
+      Object.keys(byBye).forEach((bye) => {
+        const group = byBye[bye];
+        if (group.length >= threshold) {
+          const names = group.map((pl) => pl.name).join(", ");
+          out.push(`${group.length} of your ${pos}${group.length > 1 ? "s" : ""} share bye week ${bye} (${names}) -- make sure something else on your roster covers that week.`);
+        }
+      });
+    });
+    return out;
+  }
+
   function generateNudges() {
     const out = [];
     const myPicks = state.picks.filter((p) => p.owner === "me");
@@ -807,12 +855,7 @@
       const openStarter = computeMyRoster().find((s) => s.playerId === null && s.type !== "BENCH");
       if (openStarter) out.push({ level: "danger", text: `Still an open starting ${openStarter.type} with the draft almost over -- don't punt it for a 4th bench flier.` });
     }
-    const byeCounts = {};
-    myPlayers.forEach((pl) => { if (pl.bye) byeCounts[pl.bye] = (byeCounts[pl.bye] || 0) + 1; });
-    const crowdedBye = Object.keys(byeCounts).find((b) => byeCounts[b] >= 3);
-    if (crowdedBye) {
-      out.push({ level: "warn", text: `${byeCounts[crowdedBye]} of your players share bye week ${crowdedBye} -- check your bench depth at those positions before that week hits.` });
-    }
+    byeCollisionSummary().forEach((msg) => out.push({ level: "warn", text: msg }));
 
     if (out.length === 0) out.push({ level: "info", text: "No alerts right now -- keep taking the best player on your board relative to tier, not name recognition." });
     return out.slice(0, 5);
@@ -913,6 +956,8 @@
       return;
     }
 
+    const byeCounts = myByeCounts();
+
     body.innerHTML = rows.map((p) => {
       const drafted = isDrafted(p.id);
       const pk = drafted ? pickFor(p.id) : null;
@@ -921,6 +966,16 @@
         return `<span class="badge ${meta[0]}">${meta[1]}</span>`;
       }).join(" ");
       const posLabel = p.posRank ? `${p.pos}${p.posRank}` : p.pos;
+
+      // Would drafting THIS player complete a bye-week collision with what
+      // I already have at this position? (See byeCollisionThreshold.)
+      let byeHtml = p.bye || "&ndash;";
+      if (!drafted && p.bye) {
+        const already = (byeCounts[p.pos] && byeCounts[p.pos][p.bye]) || 0;
+        if (already >= byeCollisionThreshold(p.pos) - 1) {
+          byeHtml = `${p.bye} <span class="badge warn" title="Would put ${already + 1} of your ${p.pos}s on bye week ${p.bye}">clash</span>`;
+        }
+      }
 
       let actionHtml;
       if (drafted) {
@@ -938,7 +993,7 @@
         <td><span class="badge ${tierBadgeClass(p.tier)}">T${p.tier}</span></td>
         <td>${drafted ? `<s>${Util.escapeHtml(p.name)}</s>` : Util.escapeHtml(p.name)} <span class="text-faint">${posLabel}</span></td>
         <td>${Util.escapeHtml(p.team)}</td>
-        <td>${p.bye || "&ndash;"}</td>
+        <td>${byeHtml}</td>
         <td>${flagsHtml}</td>
         <td style="text-align:right;">${actionHtml}</td>
       </tr>`;
