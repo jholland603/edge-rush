@@ -369,8 +369,18 @@ def injury_out_players(raw_dir: Path, season: int, week: int) -> pd.DataFrame:
         return pd.DataFrame(columns=["team", "position", "full_name", "report_status"])
     df = pd.read_csv(f, low_memory=False)
     df = df[(df["game_type"] == "REG") & (df["week"] == week)]
-    df["date_modified"] = pd.to_datetime(df["date_modified"], errors="coerce")
-    df = df.sort_values("date_modified").drop_duplicates(subset=["team", "gsis_id"], keep="last")
+    # nflverse has dropped `date_modified` from some in-season injuries
+    # releases (seen starting 2025/2026 -- the column simply isn't in the
+    # CSV some weeks, presumably before a team's final report is posted).
+    # Without it we can't tell which row is the "latest" report for a
+    # player, so just dedupe arbitrarily (keep last as written) instead of
+    # sorting by a column that may not exist.
+    if "date_modified" in df.columns:
+        df["date_modified"] = pd.to_datetime(df["date_modified"], errors="coerce")
+        df = df.sort_values("date_modified")
+    df = df.drop_duplicates(subset=["team", "gsis_id"], keep="last")
+    if "report_status" not in df.columns:
+        df["report_status"] = pd.NA
     return df[["team", "position", "full_name", "report_status"]]
 
 
