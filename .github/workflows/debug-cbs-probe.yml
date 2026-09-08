@@ -1,11 +1,12 @@
 name: Debug - CBS picks page probe
 
-# Throwaway diagnostic, not part of the real pipeline. Round 2: we've
-# confirmed the picks table is present in plain server-rendered HTML (see
-# round 1 output) -- this pass dumps the actual row/cell markup so we can
-# see how one game + its 7 expert picks are structured, to write a real
-# parser against. Safe to delete once we have the answer -- doesn't touch
-# D1, no secrets needed.
+# Throwaway diagnostic, not part of the real pipeline. Round 3: dry-runs
+# the real scripts/fetch_cbs_picks.py against live data -- writes the
+# generated SQL to a file and prints it (via --sql-out, same convention as
+# every other fetch_*.py in this repo) instead of applying it, so this is
+# safe to run as many times as needed with zero risk to D1. Delete this
+# workflow once fetch_cbs_picks.py is wired into odds-snapshot.yml for
+# real.
 on:
   workflow_dispatch: {}
 
@@ -13,54 +14,24 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch CBS picks page and inspect row/cell structure
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install pandas numpy
+
+      - name: Refresh games.csv
         run: |
-          python3 - <<'PYEOF'
-          import urllib.request
+          mkdir -p raw
+          curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors -o raw/games.csv \
+            https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv
 
-          url = "https://www.cbssports.com/nfl/picks/experts/against-the-spread/1/"
-          req = urllib.request.Request(url, headers={
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                            "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-              "Accept-Language": "en-US,en;q=0.9",
-          })
-          with urllib.request.urlopen(req, timeout=30) as resp:
-              html = resp.read().decode("utf-8", errors="replace")
-
-          print(f"Response length: {len(html)} chars")
-          print(f"Total <tr occurrences: {html.count('<tr')}")
-          print(f"Total <tbody occurrences: {html.count('<tbody')}")
-          print(f"Total <table occurrences: {html.count('<table')}")
-          print()
-
-          def show(label, idx, before=200, after=3000):
-              if idx == -1:
-                  print(f"--- {label}: NOT FOUND ---")
-                  return
-              print(f"--- {label} (offset {idx}) ---")
-              print(html[max(0, idx - before):idx + after])
-              print()
-
-          # First <tbody> -- should be the start of the actual game rows.
-          show("first <tbody>", html.find("<tbody"), before=0, after=4000)
-
-          # Around the first "-3.5" pick value -- shows one full pick cell
-          # in context (surrounding <td>, any team-identifying attrs/alt text).
-          show("context around first '-3.5'", html.find("-3.5"), before=1500, after=1500)
-
-          # Any data- attributes that might carry a team code, near the
-          # first tbody row (search within a slice, not whole doc).
-          tbody_idx = html.find("<tbody")
-          if tbody_idx != -1:
-              chunk = html[tbody_idx:tbody_idx + 6000]
-              import re
-              attrs = sorted(set(re.findall(r'data-[a-zA-Z-]+="[^"]{0,40}"', chunk)))
-              print("--- distinct data-* attributes seen in first row's markup ---")
-              for a in attrs[:40]:
-                  print(" ", a)
-              print()
-              alts = sorted(set(re.findall(r'alt="[^"]{0,60}"', chunk)))
-              print("--- distinct alt= attributes seen in first row's markup ---")
-              for a in alts[:40]:
-                  print(" ", a)
-          PYEOF
+      - name: Dry-run fetch_cbs_picks.py (writes SQL to a file, does not apply it)
+        run: |
+          python3 scripts/fetch_cbs_picks.py --sql-out /tmp/cbs_picks.sql
+          echo
+          echo "===== generated SQL (/tmp/cbs_picks.sql) ====="
+          cat /tmp/cbs_picks.sql
