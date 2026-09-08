@@ -1,12 +1,11 @@
 name: Debug - CBS picks page probe
 
-# Throwaway diagnostic, not part of the real pipeline. Checks whether CBS
-# Sports' NFL ATS picks page hands over its pick data in the plain HTTP
-# response (like ESPN's page does, via an embedded JSON blob -- see
-# scripts/fetch_expert_picks.py) or whether it's built client-side by
-# JavaScript after load (which would mean a lightweight urllib scraper
-# can't work and we'd need a real headless browser instead). Safe to
-# delete once we have the answer -- doesn't touch D1, no secrets needed.
+# Throwaway diagnostic, not part of the real pipeline. Round 2: we've
+# confirmed the picks table is present in plain server-rendered HTML (see
+# round 1 output) -- this pass dumps the actual row/cell markup so we can
+# see how one game + its 7 expert picks are structured, to write a real
+# parser against. Safe to delete once we have the answer -- doesn't touch
+# D1, no secrets needed.
 on:
   workflow_dispatch: {}
 
@@ -14,7 +13,7 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch CBS picks page and inspect raw response
+      - name: Fetch CBS picks page and inspect row/cell structure
         run: |
           python3 - <<'PYEOF'
           import urllib.request
@@ -26,27 +25,42 @@ jobs:
               "Accept-Language": "en-US,en;q=0.9",
           })
           with urllib.request.urlopen(req, timeout=30) as resp:
-              status = resp.status
               html = resp.read().decode("utf-8", errors="replace")
 
-          print(f"HTTP status: {status}")
           print(f"Response length: {len(html)} chars")
+          print(f"Total <tr occurrences: {html.count('<tr')}")
+          print(f"Total <tbody occurrences: {html.count('<tbody')}")
+          print(f"Total <table occurrences: {html.count('<table')}")
           print()
 
-          markers = ["Prisco", "__NEXT_DATA__", "__INITIAL_STATE__", "against-the-spread",
-                     "application/json", "-3.5", "Dubin"]
-          for m in markers:
-              idx = html.find(m)
-              print(f"  '{m}': {'FOUND at offset ' + str(idx) if idx != -1 else 'not found'}")
+          def show(label, idx, before=200, after=3000):
+              if idx == -1:
+                  print(f"--- {label}: NOT FOUND ---")
+                  return
+              print(f"--- {label} (offset {idx}) ---")
+              print(html[max(0, idx - before):idx + after])
+              print()
 
-          print()
-          print("--- first 1000 chars of response ---")
-          print(html[:1000])
-          print()
-          print("--- 1000 chars around first <table> tag (if any) ---")
-          tidx = html.lower().find("<table")
-          if tidx != -1:
-              print(html[tidx:tidx + 1000])
-          else:
-              print("no <table> tag found in raw response")
+          # First <tbody> -- should be the start of the actual game rows.
+          show("first <tbody>", html.find("<tbody"), before=0, after=4000)
+
+          # Around the first "-3.5" pick value -- shows one full pick cell
+          # in context (surrounding <td>, any team-identifying attrs/alt text).
+          show("context around first '-3.5'", html.find("-3.5"), before=1500, after=1500)
+
+          # Any data- attributes that might carry a team code, near the
+          # first tbody row (search within a slice, not whole doc).
+          tbody_idx = html.find("<tbody")
+          if tbody_idx != -1:
+              chunk = html[tbody_idx:tbody_idx + 6000]
+              import re
+              attrs = sorted(set(re.findall(r'data-[a-zA-Z-]+="[^"]{0,40}"', chunk)))
+              print("--- distinct data-* attributes seen in first row's markup ---")
+              for a in attrs[:40]:
+                  print(" ", a)
+              print()
+              alts = sorted(set(re.findall(r'alt="[^"]{0,60}"', chunk)))
+              print("--- distinct alt= attributes seen in first row's markup ---")
+              for a in alts[:40]:
+                  print(" ", a)
           PYEOF
