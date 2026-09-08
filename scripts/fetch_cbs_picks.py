@@ -32,10 +32,11 @@ is read off the sibling team-page link inside the same cell
 abbreviations) comes straight from the row's own matchup link:
 `<a href="/nfl/gametracker/preview/NFL_20260909_NE@SEA/">`.
 
-Team abbreviation mapping: CBS's team-page URLs use standard current-team
-abbreviations; the only ones known to differ from nflverse's scheme are the
-same two ESPN needed remapped (kept here defensively even if CBS turns out
-to already match -- see ABBR_TO_NFLVERSE below).
+Team abbreviation mapping: CBS's team-page URLs use "LAR" for the Rams and
+"JAC" for the Jaguars; nflverse's game_id scheme (and games.csv) uses "LA"
+and "JAX". Confirmed empirically 2026-09-08 (a live dry run's "unmatched"
+list showed exactly these two, nothing else) -- NOT the same pair ESPN
+needed (LAR/WSH); CBS already matches nflverse on Washington.
 
 Like the ESPN script it replaces: forward-looking only, no historical
 archive exists to backfill, so no backtest is possible yet -- this is pure
@@ -69,12 +70,13 @@ from fetch_odds_snapshot import build_game_lookup, match_game_id, run_d1_stateme
 
 CBS_PICKS_URL = "https://www.cbssports.com/nfl/picks/experts/against-the-spread"
 
-# CBS team-page abbr -> nflverse team abbr. Only remap what's actually been
-# seen differing (none confirmed yet -- kept as a defensive placeholder,
-# same pattern as ESPN_ABBR_TO_NFLVERSE in the script this replaces). If a
-# future run's "unmatched" list shows LAR/WSH-shaped misses, that confirms
-# CBS needs the same two remaps ESPN did; add them here.
-CBS_ABBR_TO_NFLVERSE = {}
+# CBS team-page abbr -> nflverse team abbr. See the docstring above -- this
+# is the actual confirmed diff, not guessed. If a future "unmatched" list
+# in the workflow log shows a new team pair, add it here the same way.
+CBS_ABBR_TO_NFLVERSE = {
+    "LAR": "LA",
+    "JAC": "JAX",
+}
 
 
 def normalize_abbr(abbr):
