@@ -1435,10 +1435,12 @@ async function getModelSimilarity(DB, gameId) {
     .first();
 }
 
-// Expert straight-up pick consensus (ESPN, see scripts/fetch_expert_picks.py)
-// -- forward-looking only, same as getOddsMovement/getModelSimilarity above.
-// experts_json is a JSON-encoded array of {name, pick} stored as-is; parsed
-// here rather than at read time everywhere it's used.
+// Expert against-the-spread pick consensus (CBS Sports, see
+// scripts/fetch_cbs_picks.py -- replaced the old ESPN straight-up-only
+// source 2026-09-08) -- forward-looking only, same as
+// getOddsMovement/getModelSimilarity above. experts_json is a JSON-encoded
+// array of {name, pick} stored as-is; parsed here rather than at read time
+// everywhere it's used.
 async function getExpertConsensus(DB, gameId) {
   const row = await DB.prepare(
     `SELECT source, num_experts, home_picks, away_picks, experts_json, snapshot_time
@@ -1730,16 +1732,16 @@ async function getGameSituationalSignals(DB, game) {
           note: "Not tested, not in the model -- line-movement history only started being collected 2026-08-07, so there isn't a season of graded games behind this yet to backtest against. Shown as a fact (open vs. latest median line across bookmakers) so it accumulates for a future backtest once enough games have both movement data and a final score. Threshold for 'moved' is 1.0 point.",
         }
       : null,
-    // Expert straight-up pick consensus (ESPN, see scripts/fetch_expert_picks.py)
-    // -- can't be backtested, and never fully will be: no free source publishes
-    // a historical archive of past expert picks, and this is a live opinion
-    // captured going forward, not a stat derived from the game itself. Built
-    // 2026-08-10 (Jeff's call) after checking several other free sources
-    // (Pickwatch's real pick data is paywalled; CBS's old ATS panel and
-    // Sporting News's picks page are both gone; Yahoo now just redirects to
-    // Pickswise; Pickswise is free and ATS-focused but wasn't scriptable yet
-    // and is one outlet, not a multi-expert panel). Straight-up (who wins),
-    // not against the spread -- no free ATS *panel* exists right now.
+    // Expert against-the-spread pick consensus (CBS Sports, see
+    // scripts/fetch_cbs_picks.py) -- can't be backtested, and never fully
+    // will be: no free source publishes a historical archive of past expert
+    // picks, and this is a live opinion captured going forward, not a stat
+    // derived from the game itself. Originally built 2026-08-10 (Jeff's
+    // call) against ESPN's straight-up-only picks (CBS's ATS panel looked
+    // discontinued at the time); replaced 2026-09-08 once CBS's panel was
+    // confirmed live again -- these are real against-the-spread picks from
+    // 7 named writers, closing the "no free ATS panel" gap the old ESPN
+    // source had.
     expert_consensus: expertConsensus
       ? {
           source: expertConsensus.source,

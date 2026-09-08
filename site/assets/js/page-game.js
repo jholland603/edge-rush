@@ -557,19 +557,20 @@
       );
     }
 
-    // Expert straight-up pick consensus (ESPN) -- can't be backtested even
-    // in principle (no free historical archive of past expert picks exists),
-    // shown purely as a live fact. Straight-up, not ATS -- see the note text
-    // for why no free ATS panel is used. pairHighlight here just bolds
-    // whichever side got more picks for readability, same visual language
-    // as every other two-value row on this page -- not a claim about which
-    // side is "right."
+    // Expert against-the-spread pick consensus (CBS Sports) -- can't be
+    // backtested even in principle (no free historical archive of past
+    // expert picks exists), shown purely as a live fact. Replaced the old
+    // ESPN straight-up-only source 2026-09-08; these are real ATS picks
+    // from CBS's panel of writers. pairHighlight here just bolds whichever
+    // side got more picks for readability, same visual language as every
+    // other two-value row on this page -- not a claim about which side is
+    // "right."
     if (expert_consensus) {
       const { awayCls, homeCls } = pairHighlight(expert_consensus.away_picks, expert_consensus.home_picks, true);
       const pct = (picks) => (expert_consensus.num_experts ? `${Math.round((picks / expert_consensus.num_experts) * 100)}%` : "-");
       cards.push(
         signalCard(
-          "Expert Pick Consensus (ESPN, straight-up)",
+          "Expert Pick Consensus (CBS, against the spread)",
           "untested",
           `<div class="row"><span>${Util.escapeHtml(g.away_team)}</span><span class="${awayCls}">${expert_consensus.away_picks}/${expert_consensus.num_experts} (${pct(expert_consensus.away_picks)})</span></div>` +
             `<div class="row"><span>${Util.escapeHtml(g.home_team)}</span><span class="${homeCls}">${expert_consensus.home_picks}/${expert_consensus.num_experts} (${pct(expert_consensus.home_picks)})</span></div>`,
@@ -579,10 +580,10 @@
     } else {
       cards.push(
         signalCard(
-          "Expert Pick Consensus (ESPN, straight-up)",
+          "Expert Pick Consensus (CBS, against the spread)",
           "untested",
-          `<span class="text-faint">No picks posted yet -- ESPN's analysts usually post a few days before kickoff.</span>`,
-          "Not tested, not in the model -- straight-up picks (who wins outright), not against the spread, and there's no free historical archive of past expert picks to backtest against even in principle. Shown as a fact once posted."
+          `<span class="text-faint">No picks posted yet -- CBS's writers usually post a few days before kickoff.</span>`,
+          "Not tested, not in the model -- there's no free historical archive of past expert picks to backtest against even in principle. Shown as a fact once posted."
         )
       );
     }

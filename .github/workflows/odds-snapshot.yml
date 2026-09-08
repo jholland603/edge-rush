@@ -12,10 +12,12 @@ name: Market Refresh (Odds + Model)
 #    season-spanning history pull -- it now makes sense to re-score as
 #    often as the odds themselves refresh, using each run's fresh market
 #    line, rather than waiting for the once-a-week job.
-# 3. Fetches ESPN's expert straight-up pick consensus into D1's
-#    expert_consensus table (see scripts/fetch_expert_picks.py) -- also
-#    forward-looking only, added 2026-08-10. Piggybacks on this same
-#    schedule since experts revise picks through the week same as odds.
+# 3. Fetches CBS Sports' against-the-spread expert pick consensus into D1's
+#    expert_consensus table (see scripts/fetch_cbs_picks.py) -- also
+#    forward-looking only, added 2026-08-10 (originally ESPN straight-up
+#    picks; replaced 2026-09-08 with CBS's ATS panel -- see that script's
+#    docstring for why). Piggybacks on this same schedule since experts
+#    revise picks through the week same as odds.
 # 4. Fetches team news headlines (Google News RSS, one query per team) into
 #    D1's team_news table (see scripts/fetch_team_news.py) -- added
 #    2026-08-12, Jeff's ask for upcoming-game news coverage per team. Runs
@@ -153,23 +155,20 @@ jobs:
             echo "No odds rows to insert this run."
           fi
 
-      - name: Fetch ESPN expert picks and apply to D1
+      - name: Fetch CBS expert ATS picks and apply to D1
         if: steps.gamecheck.outputs.has_games == 'true'
-        # continue-on-error added 2026-08-12: this step just failed hard
-        # ("Could not find window['__espnfitt__']" -- either ESPN's page
-        # markup changed, or picks simply aren't posted yet for a week this
-        # far out), which killed the whole job before odds/team-news/model
-        # steps below it ever ran. One third-party page's markup shouldn't
-        # be able to take down the rest of the pipeline -- same reasoning
-        # as the "unmatched"/"not published yet" skips already used
-        # elsewhere in this workflow. Revisit fetch_expert_picks.py's page
-        # parsing separately if this keeps failing.
+        # continue-on-error kept from the old ESPN step -- one third-party
+        # page's markup changing shouldn't be able to take down the rest of
+        # the pipeline, same reasoning as the "unmatched"/"not published
+        # yet" skips already used elsewhere in this workflow. Revisit
+        # fetch_cbs_picks.py's page parsing separately if this starts
+        # failing.
         continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          python3 scripts/fetch_expert_picks.py --sql-out /tmp/expert_picks.sql
+          python3 scripts/fetch_cbs_picks.py --sql-out /tmp/expert_picks.sql
           if [ -s /tmp/expert_picks.sql ]; then
             wrangler d1 execute edge-rush --remote --file=/tmp/expert_picks.sql
           else
