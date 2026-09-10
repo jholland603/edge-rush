@@ -1,6 +1,6 @@
 name: Market Refresh (Odds + Model)
 
-# Four jobs on one schedule, added together deliberately (see HANDOFF.md):
+# Five jobs on one schedule, added together deliberately (see HANDOFF.md):
 #
 # 1. Snapshots live NFL moneyline/spread/total odds from The Odds API into
 #    D1's odds_snapshot table, so line movement across the week is actually
@@ -26,6 +26,16 @@ name: Market Refresh (Odds + Model)
 #    use), gated below -- not every one of this workflow's 16 weekly
 #    triggers, since news doesn't need the Tue/Wed/Fri/Sat evening
 #    non-game-day refresh too.
+# 5. Fetches a weather forecast (temp/wind/precip chance) for upcoming
+#    REG-season games at non-dome stadiums into D1's weather_forecast table
+#    (see scripts/fetch_weather_forecast.py) -- added 2026-09-10, moved here
+#    from a local Cowork scheduled task (`nfl-weather-forecast-refresh`,
+#    see HANDOFF.md) that only existed because this sandbox's fetch tool
+#    couldn't hit Open-Meteo's JSON API directly and needed a browser-tool
+#    workaround. A GitHub Actions runner has no such problem, so it just
+#    calls the API directly. Once-a-day only (forecasts don't need
+#    refreshing before every kickoff the way odds/news do) -- reuses the
+#    existing daily morning slot instead of adding a new cron entry.
 #
 # Filename stayed odds-snapshot.yml (just the display name above changed) to
 # avoid re-creating the workflow and losing run history over a rename.
@@ -35,6 +45,8 @@ name: Market Refresh (Odds + Model)
 #                             plenty: this uses ~3 credits per run)
 #   CLOUDFLARE_API_TOKEN   - same one weekly-refresh.yml uses
 #   CLOUDFLARE_ACCOUNT_ID  - same one weekly-refresh.yml uses
+#   (weather forecasts reuse the two Cloudflare secrets above -- Open-Meteo
+#   itself needs no API key, so no new secret was added for job #5)
 
 on:
   schedule:
@@ -201,6 +213,27 @@ jobs:
             wrangler d1 execute edge-rush --remote --file=/tmp/team_news.sql
           else
             echo "No team news headlines fetched this run."
+          fi
+
+      - name: Fetch weather forecasts and apply to D1
+        # Once-a-day only, same cadence as the old local Cowork task it
+        # replaces (nfl-weather-forecast-refresh, 8:06am local -- see
+        # HANDOFF.md and the top-of-file comment). Forecasts don't move
+        # fast enough to need refreshing before every kickoff the way
+        # odds/news do, so this only runs on the daily morning slot rather
+        # than every slot in this workflow.
+        if: >
+          github.event.schedule == '0 12 * * *' ||
+          github.event_name == 'workflow_dispatch'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          python3 scripts/fetch_weather_forecast.py --sql-out /tmp/weather.sql
+          if [ -s /tmp/weather.sql ]; then
+            wrangler d1 execute edge-rush --remote --file=/tmp/weather.sql
+          else
+            echo "No weather forecasts to upsert this run."
           fi
 
       - name: Download recent team stats + injuries (rolling-10 only needs last ~1-2 seasons)
